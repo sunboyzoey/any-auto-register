@@ -147,6 +147,14 @@ const TAB_ITEMS = [
         ],
       },
       {
+        title: 'Sub2API 面板',
+        desc: '注册完成后自动上传到 Sub2API 管理后台',
+        fields: [
+          { key: 'sub2api_api_url', label: 'API URL', placeholder: 'https://your-sub2api.example.com' },
+          { key: 'sub2api_api_key', label: 'API Key', secret: true },
+        ],
+      },
+      {
         title: 'Team Manager',
         desc: '上传到自建 Team Manager 系统',
         fields: [
