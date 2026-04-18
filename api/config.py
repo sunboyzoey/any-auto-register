@@ -12,6 +12,7 @@ CONFIG_KEYS = [
     "twocaptcha_key",
     "default_executor",
     "default_captcha_solver",
+    "default_proxy",
     "duckmail_api_url",
     "duckmail_provider_url",
     "duckmail_bearer",
@@ -138,6 +139,140 @@ def update_config(body: ConfigUpdate):
     return {"ok": True, "updated": list(safe.keys())}
 
 
+class CFWorkerTestRequest(BaseModel):
+    api_url: str = ""
+    admin_token: str = ""
+    custom_auth: str = ""
+
+
+@router.post("/cfworker/test")
+def test_cfworker_connection(body: CFWorkerTestRequest):
+    """测试 CF Worker 连接，并自动获取全部可用域名"""
+    import requests as _requests
+    import secrets
+
+    api_url = str(body.api_url or config_store.get("cfworker_api_url", "")).strip().rstrip("/")
+    admin_token = str(body.admin_token or config_store.get("cfworker_admin_token", "")).strip()
+    custom_auth = str(body.custom_auth or config_store.get("cfworker_custom_auth", "")).strip()
+
+    if not api_url:
+        return {"ok": False, "error": "API URL 未配置"}
+
+    # ── Step 1: 调用 /open_api/settings 获取全部域名（公开接口，无需认证）──
+    all_domains: list[str] = []
+    worker_version = ""
+    try:
+        resp_settings = _requests.get(f"{api_url}/open_api/settings", timeout=15)
+        if resp_settings.status_code == 200:
+            settings_data = resp_settings.json() if resp_settings.content else {}
+            raw_domains = settings_data.get("domains") or settings_data.get("defaultDomains") or []
+            if isinstance(raw_domains, list):
+                all_domains = [str(d).strip() for d in raw_domains if str(d).strip()]
+            worker_version = str(settings_data.get("version", "")).strip()
+    except Exception:
+        pass
+
+    # ── Step 2: 验证 Admin 认证（创建测试邮箱）──
+    headers = {
+        "accept": "application/json, text/plain, */*",
+        "content-type": "application/json",
+    }
+    if admin_token:
+        headers["x-admin-auth"] = admin_token
+    if custom_auth:
+        headers["x-custom-auth"] = custom_auth
+
+    auth_ok = False
+    warning = ""
+    detected_domain = ""
+
+    try:
+        test_name = f"_conntest_{secrets.token_hex(4)}"
+        resp = _requests.post(
+            f"{api_url}/admin/new_address",
+            headers=headers,
+            json={"enablePrefix": True, "name": test_name},
+            timeout=15,
+        )
+
+        if resp.status_code == 200:
+            auth_ok = True
+            data = resp.json() if resp.content else {}
+            test_email = str(data.get("email") or data.get("address") or "")
+            if "@" in test_email:
+                detected_domain = test_email.split("@", 1)[1]
+        elif resp.status_code in (401, 403):
+            # 自动交换 admin_token ↔ custom_auth 重试
+            retry_headers = dict(headers)
+            if admin_token and custom_auth:
+                retry_headers["x-admin-auth"] = custom_auth
+                retry_headers["x-custom-auth"] = admin_token
+            elif admin_token:
+                retry_headers["x-custom-auth"] = admin_token
+            elif custom_auth:
+                retry_headers["x-admin-auth"] = custom_auth
+
+            resp2 = _requests.post(
+                f"{api_url}/admin/new_address",
+                headers=retry_headers,
+                json={"enablePrefix": True, "name": test_name},
+                timeout=15,
+            )
+            if resp2.status_code == 200:
+                auth_ok = True
+                data2 = resp2.json() if resp2.content else {}
+                test_email = str(data2.get("email") or data2.get("address") or "")
+                if "@" in test_email:
+                    detected_domain = test_email.split("@", 1)[1]
+                warning = "Admin Token 和站点密码可能填反了，建议检查"
+            else:
+                # 即使 admin 认证失败，如果域名已经通过 open_api 获取到，也算部分成功
+                if all_domains:
+                    return {
+                        "ok": True,
+                        "message": f"已获取 {len(all_domains)} 个域名（Admin 认证未通过，注册时可能失败）",
+                        "detected_domains": all_domains,
+                        "warning": "Admin Token 或站点密码不正确，域名已通过公开接口获取",
+                        "version": worker_version,
+                    }
+                return {
+                    "ok": False,
+                    "error": "认证失败，请检查 Admin Token 和站点密码",
+                }
+        else:
+            return {"ok": False, "error": f"请求失败 (HTTP {resp.status_code})"}
+
+    except _requests.exceptions.ConnectTimeout:
+        return {"ok": False, "error": "连接超时，请检查 API URL"}
+    except _requests.exceptions.SSLError as e:
+        return {"ok": False, "error": f"SSL 错误: {str(e)[:100]}"}
+    except _requests.exceptions.ConnectionError as e:
+        msg = str(e)
+        if "NameResolutionError" in msg or "getaddrinfo" in msg:
+            return {"ok": False, "error": "域名解析失败，请检查 API URL"}
+        return {"ok": False, "error": f"无法连接: {msg[:150]}"}
+    except Exception as e:
+        return {"ok": False, "error": f"请求异常: {str(e)[:150]}"}
+
+    # ── 合并结果 ──
+    # 如果 open_api 没有获取到域名，至少用 detected_domain
+    if not all_domains and detected_domain:
+        all_domains = [detected_domain]
+    elif detected_domain and detected_domain not in all_domains:
+        all_domains.insert(0, detected_domain)
+
+    result = {
+        "ok": True,
+        "message": f"连接成功，共 {len(all_domains)} 个可用域名",
+        "detected_domains": all_domains,
+    }
+    if worker_version:
+        result["version"] = worker_version
+    if warning:
+        result["warning"] = warning
+    return result
+
+
 @router.post("/applemail/import")
 def import_applemail_pool(body: AppleMailImportRequest):
     from core.applemail_pool import load_applemail_pool_snapshot, save_applemail_pool_json
@@ -169,6 +304,45 @@ def import_applemail_pool(body: AppleMailImportRequest):
         "items": snapshot["items"],
         "truncated": snapshot["truncated"],
     }
+
+
+@router.get("/cfworker/domains")
+def get_cfworker_domains():
+    """返回 CF Worker 的可用域名列表（优先从 Worker 实时获取，兜底读全局配置）"""
+    import json
+    import requests as _requests
+
+    api_url = config_store.get("cfworker_api_url", "").strip().rstrip("/")
+    configured = bool(api_url)
+
+    # 优先从 Worker 实时获取
+    live_domains: list[str] = []
+    if api_url:
+        try:
+            resp = _requests.get(f"{api_url}/open_api/settings", timeout=10)
+            if resp.status_code == 200:
+                data = resp.json() if resp.content else {}
+                raw = data.get("domains") or data.get("defaultDomains") or []
+                if isinstance(raw, list):
+                    live_domains = [str(d).strip() for d in raw if str(d).strip()]
+        except Exception:
+            pass
+
+    if live_domains:
+        return {"configured": configured, "api_url": api_url, "domains": live_domains, "source": "live"}
+
+    # 兜底：从全局配置读取
+    raw = config_store.get("cfworker_enabled_domains", "")
+    domains = []
+    if raw:
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                domains = [str(d).strip() for d in parsed if str(d).strip()]
+        except (json.JSONDecodeError, TypeError):
+            domains = [d.strip() for d in raw.split(",") if d.strip()]
+
+    return {"configured": configured, "api_url": api_url, "domains": domains, "source": "config"}
 
 
 @router.get("/applemail/pool")

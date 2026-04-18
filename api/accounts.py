@@ -53,7 +53,7 @@ def list_accounts(
     if email:
         q = q.where(AccountModel.email.contains(email))
     total = len(session.exec(q).all())
-    items = session.exec(q.offset((page - 1) * page_size).limit(page_size)).all()
+    items = session.exec(q.order_by(AccountModel.created_at.desc()).offset((page - 1) * page_size).limit(page_size)).all()
     return {"total": total, "page": page, "items": items}
 
 

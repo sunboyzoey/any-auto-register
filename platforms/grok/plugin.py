@@ -13,6 +13,9 @@ class GrokPlatform(BasePlatform):
     display_name = "Grok"
     version = "1.0.0"
 
+    # Grok 仅支持纯协议模式
+    supported_executors: list = ["protocol"]
+
     def __init__(
         self,
         config: Optional[RegisterConfig] = None,
@@ -22,23 +25,18 @@ class GrokPlatform(BasePlatform):
         self.mailbox = mailbox
 
     def register(self, email: str, password: Optional[str] = None) -> Account:
-        from platforms.grok.core import GrokRegister
+        from platforms.grok.protocol import GrokProtocolRegister
         from core.config_store import config_store
 
         log = getattr(self, "_log_fn", print)
-
-        # 优先从任务配置读取，兜底从全局配置读取
         yescaptcha_key = self.config.extra.get("yescaptcha_key") or config_store.get(
             "yescaptcha_key", ""
         )
-        captcha_solver = self._make_captcha(key=yescaptcha_key)
-        requested_headless = (self.config.executor_type or "protocol") != "headed"
-        reg = GrokRegister(
-            captcha_solver=captcha_solver,
-            yescaptcha_key=yescaptcha_key,
+
+        reg = GrokProtocolRegister(
             proxy=self.config.proxy,
             log_fn=log,
-            headless=requested_headless,
+            yescaptcha_key=yescaptcha_key,
         )
         mailbox_attempts = (
             1 if email else int(self.config.extra.get("grok_mailbox_attempts", 8))
@@ -106,6 +104,7 @@ class GrokPlatform(BasePlatform):
                 "sso_rw": result["sso_rw"],
                 "given_name": result["given_name"],
                 "family_name": result["family_name"],
+                "cashier_url": result.get("cashier_url", ""),
             },
         )
 
@@ -115,6 +114,7 @@ class GrokPlatform(BasePlatform):
     def get_platform_actions(self) -> list:
         return [
             {"id": "upload_grok2api", "label": "导入 grok2api", "params": []},
+            {"id": "payment_link", "label": "获取支付链接", "params": []},
         ]
 
     def execute_action(self, action_id: str, account: Account, params: dict) -> dict:
@@ -123,4 +123,28 @@ class GrokPlatform(BasePlatform):
 
             ok, msg = upload_to_grok2api(account)
             return {"ok": ok, "data": {"message": msg}}
+
+        if action_id == "payment_link":
+            from platforms.grok.protocol import GrokProtocolRegister
+            from core.config_store import config_store
+
+            extra = account.extra or {}
+            sso = extra.get("sso", "")
+            sso_rw = extra.get("sso_rw", "")
+            if not sso:
+                return {"ok": False, "error": "缺少 SSO cookie，无法获取支付链接"}
+
+            reg = GrokProtocolRegister(
+                proxy=self.config.proxy if self.config else None,
+                log_fn=getattr(self, "_log_fn", print),
+            )
+            url = reg.get_payment_link(account.email, sso, sso_rw)
+            if url:
+                return {
+                    "ok": True,
+                    "data": {"url": url, "cashier_url": url, "message": f"支付链接已获取"},
+                    "account_extra_patch": {"cashier_url": url},
+                }
+            return {"ok": False, "error": "获取支付链接失败"}
+
         raise NotImplementedError(f"未知操作: {action_id}")

@@ -56,3 +56,15 @@ CLAUDE.md
 .ace-tool/
 smstome*_numbers.txt
 smstome_used/
+
+# Cookie / 注册结果
+Results_ChatGPT/
+cookies/
+my_cookie.json
+*.bak
+*.bak2
+
+# 调试截图 / 临时 HTML
+cursor_*.png
+kiro_*.png
+kiro_*.html

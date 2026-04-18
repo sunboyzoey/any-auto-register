@@ -10,6 +10,8 @@ import {
   SunOutlined,
   MoonOutlined,
   LogoutOutlined,
+  MailOutlined,
+  ClockCircleOutlined,
 } from '@ant-design/icons'
 import zhCN from 'antd/locale/zh_CN'
 import Dashboard from '@/pages/Dashboard'
@@ -19,6 +21,8 @@ import Proxies from '@/pages/Proxies'
 import Settings from '@/pages/Settings'
 import TaskHistory from '@/pages/TaskHistory'
 import Login from '@/pages/Login'
+import OutlookAccounts from '@/pages/OutlookAccounts'
+import ScheduledJobs from '@/pages/ScheduledJobs'
 import { darkTheme, lightTheme } from './theme'
 import { apiFetch, clearToken, getToken } from '@/lib/utils'
 
@@ -91,6 +95,8 @@ function AppContent() {
     const path = location.pathname
     if (path === '/') return ['/']
     if (path.startsWith('/accounts')) return [path]
+    if (path === '/outlook') return ['/outlook']
+    if (path === '/scheduled') return ['/scheduled']
     if (path === '/history') return ['/history']
     if (path === '/proxies') return ['/proxies']
     if (path === '/settings') return ['/settings']
@@ -111,6 +117,16 @@ function AppContent() {
         key: `/accounts/${p.key}`,
         label: p.label,
       })),
+    },
+    {
+      key: '/outlook',
+      icon: <MailOutlined />,
+      label: 'Outlook 邮箱',
+    },
+    {
+      key: '/scheduled',
+      icon: <ClockCircleOutlined />,
+      label: '定时任务',
     },
     {
       key: '/history',
@@ -148,8 +164,10 @@ function AppContent() {
               height: 64,
               display: 'flex',
               alignItems: 'center',
-              justifyContent: 'center',
+              justifyContent: collapsed ? 'center' : 'flex-start',
+              paddingLeft: collapsed ? 0 : 20,
               borderBottom: `1px solid ${currentTheme.token?.colorBorder}`,
+              background: `linear-gradient(135deg, ${currentTheme.token?.colorPrimary}10, transparent)`,
             }}
           >
             <DashboardOutlined style={{ fontSize: 20, color: currentTheme.token?.colorPrimary }} />
@@ -219,6 +237,8 @@ function AppContent() {
           </div>
         </Sider>
         <Content
+          className="page-transition"
+          key={location.pathname}
           style={{
             padding: 24,
             overflow: 'auto',
@@ -229,6 +249,8 @@ function AppContent() {
             <Route path="/" element={<Dashboard />} />
             <Route path="/accounts" element={<Accounts />} />
             <Route path="/accounts/:platform" element={<Accounts />} />
+            <Route path="/outlook" element={<OutlookAccounts />} />
+            <Route path="/scheduled" element={<ScheduledJobs />} />
             <Route path="/register" element={<RegisterTaskPage />} />
             <Route path="/history" element={<TaskHistory />} />
             <Route path="/proxies" element={<Proxies />} />

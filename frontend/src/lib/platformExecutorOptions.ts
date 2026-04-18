@@ -7,7 +7,7 @@ export const EXECUTOR_OPTIONS = [
 const PLATFORM_EXECUTORS: Record<string, string[]> = {
   chatgpt: ['protocol', 'headless', 'headed'],
   cursor: ['protocol', 'headless', 'headed'],
-  grok: ['protocol', 'headless', 'headed'],
+  grok: ['protocol'],
   kiro: ['protocol', 'headless', 'headed'],
   tavily: ['protocol', 'headless', 'headed'],
   trae: ['protocol', 'headless', 'headed'],

@@ -14,10 +14,12 @@ body {
   min-height: 100vh;
 }
 
+/* ── 侧边栏 ───────────────────────────────── */
 .ant-layout-sider-trigger {
-  border-top: 1px solid var(--sider-trigger-border, rgba(255, 255, 255, 0.15));
+  border-top: 1px solid var(--sider-trigger-border, rgba(255, 255, 255, 0.08));
 }
 
+/* ── 滚动条 ───────────────────────────────── */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -28,92 +30,128 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(128, 128, 128, 0.3);
+  background: rgba(128, 128, 128, 0.25);
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(128, 128, 128, 0.5);
+  background: rgba(128, 128, 128, 0.45);
 }
 
-/* ── 全局动画 ────────────────────────────── */
+/* ── 选择色 ────────────────────────────────── */
+::selection {
+  background: rgba(99, 102, 241, 0.5);
+  color: white;
+}
+
+/* ── 页面过渡动画 ──────────────────────────── */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 @keyframes fadeIn {
   from { opacity: 0; }
   to { opacity: 1; }
 }
 
-@keyframes slideInUp {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
+.page-transition {
+  animation: fadeInUp 0.35s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-@keyframes slideInRight {
-  from { opacity: 0; transform: translateX(10px); }
-  to { opacity: 1; transform: translateX(0); }
+/* ── 卡片统一样式 ──────────────────────────── */
+.ant-card {
+  transition: box-shadow 0.25s ease, border-color 0.25s ease, transform 0.2s ease;
 }
 
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
+html:not(.light) .ant-card {
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 }
 
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+html:not(.light) .ant-card:hover {
+  border-color: rgba(99, 102, 241, 0.25);
+  box-shadow: 0 4px 20px rgba(99, 102, 241, 0.08);
+  transform: translateY(-1px);
 }
 
-.animate-fade-in {
-  animation: fadeIn 0.3s ease-out;
+html.light .ant-card {
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
 }
 
-.animate-slide-in-up {
-  animation: slideInUp 0.3s ease-out;
+html.light .ant-card:hover {
+  border-color: rgba(79, 70, 229, 0.15);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.08);
+  transform: translateY(-1px);
 }
 
-.animate-slide-in-right {
-  animation: slideInRight 0.3s ease-out;
+/* ── 表格美化 ──────────────────────────────── */
+.ant-table-wrapper .ant-table-thead > tr > th {
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
 }
 
-/* ── 页面过渡 ───────────────────────────── */
-.page-enter {
-  animation: slideInUp 0.3s ease-out;
+.ant-table-wrapper .ant-table-tbody > tr {
+  transition: background-color 0.15s ease;
 }
 
-/* ── 悬停效果 ────────────────────────────── */
-.hover-lift {
-  transition: transform 0.2s ease-out, box-shadow 0.2s ease-out;
+/* ── Tag 统一间距 ──────────────────────────── */
+.ant-tag {
+  border-radius: 6px;
 }
 
-.hover-lift:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 25px rgba(0,0,0,0.15);
+/* ── 按钮过渡 ──────────────────────────────── */
+.ant-btn {
+  transition: all 0.2s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-/* ── 滚动条样式 ──────────────────────────── */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+/* ── Modal 动画增强 ────────────────────────── */
+.ant-modal-content {
+  border-radius: 12px !important;
 }
 
-::-webkit-scrollbar-track {
-  background: var(--bg-base);
+/* ── Statistic 数字加粗 ───────────────────── */
+.ant-statistic-content-value {
+  font-weight: 700;
 }
 
-::-webkit-scrollbar-thumb {
-  background: var(--border);
-  border-radius: 4px;
+/* ── 输入框圆角 ───────────────────────────── */
+.ant-input,
+.ant-input-password,
+.ant-select-selector,
+.ant-input-number {
+  border-radius: 8px !important;
 }
 
-::-webkit-scrollbar-thumb:hover {
-  background: var(--text-muted);
+/* ── 暗色模式微光效果 ─────────────────────── */
+.ant-card {
+  border: 1px solid var(--card-border, rgba(255, 255, 255, 0.06));
 }
 
-/* ── 选择颜色 ────────────────────────────── */
-::selection {
-  background: rgba(99, 102, 241, 0.6);
-  color: white;
+html.light .ant-card {
+  border-color: rgba(0, 0, 0, 0.06);
+  --card-border: rgba(0, 0, 0, 0.06);
 }
 
+html:not(.light) .ant-card:hover {
+  border-color: rgba(99, 102, 241, 0.15);
+}
+
+html.light .ant-card:hover {
+  border-color: rgba(79, 70, 229, 0.12);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
+}
+
+/* ── 日志面板 ──────────────────────────────── */
 .log-panel::selection,
 .log-panel *::selection {
   background: rgba(99, 102, 241, 0.35);

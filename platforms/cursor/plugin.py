@@ -2,7 +2,13 @@
 from core.base_platform import BasePlatform, Account, AccountStatus, RegisterConfig
 from core.base_mailbox import BaseMailbox
 from core.registry import register
-from platforms.cursor.core import CursorRegister, UA, CURSOR
+from platforms.cursor.core import CursorRegister, CURSOR
+
+
+UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
+)
 
 
 @register

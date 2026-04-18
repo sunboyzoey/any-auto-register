@@ -3104,8 +3104,10 @@ class OutlookMailbox(BaseMailbox):
         self._token_endpoint = str(token_endpoint or "").strip()
 
     def _pop_account(self) -> dict:
+        """预留制：标记为禁用而非直接删除，注册失败后可归还"""
         from sqlmodel import Session, select
         from core.db import engine, OutlookAccountModel
+        from datetime import datetime, timezone
 
         with self._lock:
             with Session(engine) as session:
@@ -3126,10 +3128,54 @@ class OutlookMailbox(BaseMailbox):
                     "password": account.password,
                     "client_id": account.client_id,
                     "refresh_token": account.refresh_token,
+                    "mail_access_type": account.mail_access_type or "",
                 }
-                session.delete(account)
+                # 预留：标记为禁用而非删除
+                account.enabled = False
+                account.updated_at = datetime.now(timezone.utc)
+                session.add(account)
                 session.commit()
                 return payload
+
+    @staticmethod
+    def return_account(account_id: int):
+        """注册失败时归还邮箱（重新启用）"""
+        from sqlmodel import Session
+        from core.db import engine, OutlookAccountModel
+        from datetime import datetime, timezone
+        try:
+            with Session(engine) as session:
+                acc = session.get(OutlookAccountModel, account_id)
+                if acc and not acc.enabled:
+                    acc.enabled = True
+                    acc.updated_at = datetime.now(timezone.utc)
+                    session.add(acc)
+                    session.commit()
+        except Exception:
+            pass
+
+    @staticmethod
+    def restore_all_reserved():
+        """服务重启时：将所有 enabled=False 的邮箱归还"""
+        from sqlmodel import Session, select
+        from core.db import engine, OutlookAccountModel
+        from datetime import datetime, timezone
+        try:
+            with Session(engine) as session:
+                reserved = session.exec(
+                    select(OutlookAccountModel).where(OutlookAccountModel.enabled == False)
+                ).all()
+                count = 0
+                for acc in reserved:
+                    acc.enabled = True
+                    acc.updated_at = datetime.now(timezone.utc)
+                    session.add(acc)
+                    count += 1
+                if count:
+                    session.commit()
+                    print(f"[Outlook] 已归还 {count} 个中断预留的邮箱")
+        except Exception:
+            pass
 
     def get_email(self) -> MailboxAccount:
         payload = self._pop_account()
@@ -3145,6 +3191,7 @@ class OutlookMailbox(BaseMailbox):
                 "password": payload.get("password") or "",
                 "client_id": payload.get("client_id") or "",
                 "refresh_token": payload.get("refresh_token") or "",
+                "mail_access_type": payload.get("mail_access_type") or "",
             },
         )
 
@@ -3166,18 +3213,17 @@ class OutlookMailbox(BaseMailbox):
                 "https://login.microsoftonline.com/common/oauth2/v2.0/token",
             ]
 
-    def _fetch_oauth_token(self, *, email: str, client_id: str, refresh_token: str) -> str:
+    def _fetch_oauth_token(self, *, email: str, client_id: str, refresh_token: str, scope: str = "") -> str:
         if not client_id or not refresh_token:
             return ""
         import requests
 
-        scope = ""
-        try:
-            from platforms.chatgpt.constants import MICROSOFT_SCOPES
-
-            scope = str(MICROSOFT_SCOPES.get("IMAP_NEW") or "").strip()
-        except Exception:
-            scope = "https://outlook.office.com/IMAP.AccessAsUser.All offline_access"
+        if not scope:
+            try:
+                from platforms.chatgpt.constants import MICROSOFT_SCOPES
+                scope = str(MICROSOFT_SCOPES.get("IMAP_NEW") or "").strip()
+            except Exception:
+                scope = "https://outlook.office.com/IMAP.AccessAsUser.All offline_access"
 
         for endpoint in self._token_endpoints():
             endpoint = str(endpoint or "").strip()
@@ -3202,11 +3248,60 @@ class OutlookMailbox(BaseMailbox):
                 data = resp.json() if resp.content else {}
                 access_token = str(data.get("access_token") or "").strip()
                 if access_token:
-                    self._log(f"[Outlook] OAuth access token 获取成功: {email}")
                     return access_token
             except Exception:
                 continue
         return ""
+
+    def _fetch_graph_messages(self, account: MailboxAccount, top: int = 15) -> list[dict]:
+        """通过 Microsoft Graph API 获取最近邮件（Inbox + Junk Email）"""
+        import requests
+
+        extra = account.extra or {}
+        client_id = str(extra.get("client_id") or "").strip()
+        refresh_token = str(extra.get("refresh_token") or "").strip()
+        email_addr = str(account.email or "").strip()
+
+        access_token = self._fetch_oauth_token(
+            email=email_addr, client_id=client_id, refresh_token=refresh_token,
+            scope="https://graph.microsoft.com/.default",
+        )
+        if not access_token:
+            raise RuntimeError(f"[Outlook] Graph API: 获取 access_token 失败: {email_addr}")
+
+        all_messages = []
+
+        # 搜索 Inbox + Junk Email 两个文件夹
+        for folder in ["inbox", "junkemail"]:
+            try:
+                resp = requests.get(
+                    f"https://graph.microsoft.com/v1.0/me/mailFolders/{folder}/messages",
+                    headers={"Authorization": f"Bearer {access_token}"},
+                    params={
+                        "$top": top,
+                        "$orderby": "receivedDateTime desc",
+                        "$select": "id,subject,from,bodyPreview,body,receivedDateTime",
+                    },
+                    timeout=20,
+                    proxies=self._proxy,
+                )
+                if resp.status_code == 200:
+                    messages = resp.json().get("value", [])
+                    all_messages.extend([
+                        {
+                            "id": m.get("id", ""),
+                            "subject": m.get("subject", ""),
+                            "from": (m.get("from") or {}).get("emailAddress", {}).get("address", ""),
+                            "preview": m.get("bodyPreview", ""),
+                            "body": (m.get("body") or {}).get("content", ""),
+                            "time": m.get("receivedDateTime", ""),
+                        }
+                        for m in messages
+                    ])
+            except Exception:
+                continue
+
+        return all_messages
 
     def _imap_auth_oauth(self, imap_conn, *, email: str, access_token: str) -> None:
         auth_string = f"user={email}\x01auth=Bearer {access_token}\x01\x01"
@@ -3310,7 +3405,17 @@ class OutlookMailbox(BaseMailbox):
         combined = (subject + " " + " ".join(body_chunks)).strip()
         return self._decode_raw_content(combined)
 
+    def _is_graph_account(self, account: MailboxAccount) -> bool:
+        return str((account.extra or {}).get("mail_access_type") or "").strip().lower() == "graph"
+
     def get_current_ids(self, account: MailboxAccount) -> set:
+        if self._is_graph_account(account):
+            try:
+                messages = self._fetch_graph_messages(account, top=20)
+                return {str(m.get("id", "")) for m in messages if m.get("id")}
+            except Exception:
+                return set()
+
         imap_conn = None
         try:
             imap_conn = self._open_imap(account)
@@ -3338,9 +3443,6 @@ class OutlookMailbox(BaseMailbox):
         code_pattern: str = None,
         **kwargs,
     ) -> str:
-        from email import message_from_bytes
-        from email.policy import default as email_default_policy
-
         seen = {str(mid) for mid in (before_ids or set())}
         exclude_codes = {
             str(code).strip()
@@ -3348,6 +3450,55 @@ class OutlookMailbox(BaseMailbox):
             if str(code or "").strip()
         }
         keyword_lower = str(keyword or "").strip().lower()
+
+        if self._is_graph_account(account):
+            return self._wait_for_code_graph(
+                account, seen=seen, exclude_codes=exclude_codes,
+                keyword_lower=keyword_lower, code_pattern=code_pattern,
+                timeout=timeout,
+            )
+        return self._wait_for_code_imap(
+            account, seen=seen, exclude_codes=exclude_codes,
+            keyword_lower=keyword_lower, code_pattern=code_pattern,
+            timeout=timeout,
+        )
+
+    def _wait_for_code_graph(
+        self, account: MailboxAccount, *, seen: set, exclude_codes: set,
+        keyword_lower: str, code_pattern: str | None, timeout: int,
+    ) -> str:
+        def poll_once() -> Optional[str]:
+            try:
+                messages = self._fetch_graph_messages(account, top=15)
+                for m in messages:
+                    mid = str(m.get("id", ""))
+                    if not mid or mid in seen:
+                        continue
+                    seen.add(mid)
+                    text = f"{m.get('subject', '')} {m.get('preview', '')} {m.get('body', '')}"
+                    text = self._decode_raw_content(text)
+                    if keyword_lower and keyword_lower not in text.lower():
+                        continue
+                    code = self._safe_extract(text, code_pattern)
+                    if code and code in exclude_codes:
+                        continue
+                    if code:
+                        self._log(f"[Outlook/Graph] 收到验证码: {code}")
+                        return code
+            except Exception as e:
+                self._log(f"[Outlook/Graph] 轮询异常: {e}")
+            return None
+
+        return self._run_polling_wait(
+            timeout=timeout, poll_interval=5, poll_once=poll_once,
+        )
+
+    def _wait_for_code_imap(
+        self, account: MailboxAccount, *, seen: set, exclude_codes: set,
+        keyword_lower: str, code_pattern: str | None, timeout: int,
+    ) -> str:
+        from email import message_from_bytes
+        from email.policy import default as email_default_policy
 
         def poll_once() -> Optional[str]:
             imap_conn = None
@@ -3387,6 +3538,7 @@ class OutlookMailbox(BaseMailbox):
                     if code:
                         if code in exclude_codes:
                             continue
+                        self._log(f"[Outlook/IMAP] 收到验证码: {code}")
                         return code
             except Exception:
                 return None
@@ -3399,9 +3551,7 @@ class OutlookMailbox(BaseMailbox):
             return None
 
         return self._run_polling_wait(
-            timeout=timeout,
-            poll_interval=5,
-            poll_once=poll_once,
+            timeout=timeout, poll_interval=5, poll_once=poll_once,
         )
 
 

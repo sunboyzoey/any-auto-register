@@ -1,15 +1,12 @@
 """ChatGPT / Codex CLI 平台插件"""
 
+import json
 import random
 import string
 
 from core.base_mailbox import BaseMailbox
-from core.base_platform import Account, BasePlatform, RegisterConfig
+from core.base_platform import Account, AccountStatus, BasePlatform, RegisterConfig
 from core.registry import register
-from platforms.chatgpt.chatgpt_registration_mode_adapter import (
-    ChatGPTRegistrationContext,
-    build_chatgpt_registration_mode_adapter,
-)
 
 
 @register
@@ -43,32 +40,23 @@ class ChatGPTPlatform(BasePlatform):
             password = "".join(random.choices(string.ascii_letters + string.digits + "!@#$", k=16))
 
         proxy = self.config.proxy if self.config else None
-        browser_mode = (self.config.executor_type if self.config else None) or "protocol"
         extra_config = (self.config.extra or {}) if self.config and getattr(self.config, "extra", None) else {}
         log_fn = getattr(self, "_log_fn", print)
-        max_retries = 3
-        try:
-            max_retries = int(extra_config.get("register_max_retries", 3) or 3)
-        except Exception:
-            max_retries = 3
 
-        def _resolve_mailbox_timeout(requested_timeout: int) -> int:
-            candidates = (
-                extra_config.get("mailbox_otp_timeout_seconds"),
-                extra_config.get("email_otp_timeout_seconds"),
-                extra_config.get("otp_timeout"),
-                requested_timeout,
-            )
-            for value in candidates:
-                if value in (None, ""):
-                    continue
-                try:
-                    seconds = int(value)
-                except (TypeError, ValueError):
-                    continue
-                if seconds > 0:
-                    return seconds
-            return requested_timeout
+        mail_provider = extra_config.get("mail_provider", "")
+
+        # ── CF Worker 域名邮箱 → DrissionPage 浏览器注册 ──
+        if mail_provider == "cfworker":
+            return self._register_drission(email, password, proxy, extra_config, log_fn)
+
+        # ── 其他邮箱 → 纯协议 v2 引擎 ──
+        from platforms.chatgpt.protocol_register import ChatGPTProtocolRegister
+
+        reg = ChatGPTProtocolRegister(
+            proxy=proxy,
+            log_fn=log_fn,
+            cookie_dir=extra_config.get("cookie_json_dir", "cookies"),
+        )
 
         if self.mailbox:
             _mailbox = self.mailbox
@@ -77,126 +65,109 @@ class ChatGPTPlatform(BasePlatform):
             def _resolve_email(candidate_email: str = "") -> str:
                 resolved_email = str(_fixed_email or candidate_email or "").strip()
                 if not resolved_email:
-                    raise RuntimeError("custom_provider 返回空邮箱地址")
+                    raise RuntimeError("邮箱地址为空")
                 return resolved_email
 
-            class GenericEmailService:
-                service_type = type("ST", (), {"value": "custom_provider"})()
+            mail_acct = _mailbox.get_email()
+            current_email = _resolve_email(getattr(mail_acct, "email", ""))
+            get_current_ids = getattr(_mailbox, "get_current_ids", None)
+            before_ids = set(get_current_ids(mail_acct) or []) if callable(get_current_ids) else set()
 
-                def __init__(self):
-                    self._acct = None
-                    self._email = _fixed_email
-                    self._before_ids = set()
+            otp_timeout = self.get_mailbox_otp_timeout()
 
-                def create_email(self, config=None):
-                    if self._email and self._acct and _fixed_email:
-                        return {"email": self._email, "service_id": self._acct.account_id, "token": ""}
-                    self._acct = _mailbox.get_email()
-                    get_current_ids = getattr(_mailbox, "get_current_ids", None)
-                    if callable(get_current_ids):
-                        self._before_ids = set(get_current_ids(self._acct) or [])
-                    else:
-                        self._before_ids = set()
-                    generated_email = getattr(self._acct, "email", "")
-                    if not self._email:
-                        self._email = _resolve_email(generated_email)
-                    elif not _fixed_email:
-                        self._email = _resolve_email(generated_email)
-                    return {"email": self._email, "service_id": self._acct.account_id, "token": ""}
-
-                def get_verification_code(
-                    self,
-                    email=None,
-                    email_id=None,
-                    timeout=120,
-                    pattern=None,
-                    otp_sent_at=None,
-                    exclude_codes=None,
-                ):
-                    if not self._acct:
-                        raise RuntimeError("邮箱账户尚未创建，无法获取验证码")
-                    return _mailbox.wait_for_code(
-                        self._acct,
-                        keyword="",
-                        timeout=_resolve_mailbox_timeout(timeout),
-                        before_ids=self._before_ids,
-                        otp_sent_at=otp_sent_at,
-                        exclude_codes=exclude_codes,
-                    )
-
-                def update_status(self, success, error=None):
-                    pass
-
-                @property
-                def status(self):
-                    return None
-
-            email_service = GenericEmailService()
+            def otp_cb():
+                log_fn("等待验证码...")
+                code = _mailbox.wait_for_code(
+                    mail_acct, keyword="", timeout=otp_timeout, before_ids=before_ids,
+                )
+                if code:
+                    log_fn(f"验证码: {code}")
+                return code
         else:
-            from core.base_mailbox import TempMailLolMailbox
+            current_email = email or ""
+            otp_cb = None
 
-            _tmail = TempMailLolMailbox(proxy=proxy)
-            _tmail._task_control = getattr(self, "_task_control", None)
+        if not current_email:
+            raise RuntimeError("未获取到邮箱地址")
 
-            class TempMailEmailService:
-                service_type = type("ST", (), {"value": "tempmail_lol"})()
-
-                def __init__(self):
-                    self._acct = None
-                    self._before_ids = set()
-
-                def create_email(self, config=None):
-                    acct = _tmail.get_email()
-                    self._acct = acct
-                    self._before_ids = set(_tmail.get_current_ids(acct) or [])
-                    resolved_email = str(getattr(acct, "email", "") or "").strip()
-                    if not resolved_email:
-                        raise RuntimeError("tempmail_lol 返回空邮箱地址")
-                    return {"email": resolved_email, "service_id": acct.account_id, "token": acct.account_id}
-
-                def get_verification_code(
-                    self,
-                    email=None,
-                    email_id=None,
-                    timeout=120,
-                    pattern=None,
-                    otp_sent_at=None,
-                    exclude_codes=None,
-                ):
-                    return _tmail.wait_for_code(
-                        self._acct,
-                        keyword="",
-                        timeout=_resolve_mailbox_timeout(timeout),
-                        before_ids=self._before_ids,
-                        otp_sent_at=otp_sent_at,
-                        exclude_codes=exclude_codes,
-                    )
-
-                def update_status(self, success, error=None):
-                    pass
-
-                @property
-                def status(self):
-                    return None
-
-            email_service = TempMailEmailService()
-
-        adapter = build_chatgpt_registration_mode_adapter(extra_config)
-        context = ChatGPTRegistrationContext(
-            email_service=email_service,
-            proxy_url=proxy,
-            callback_logger=log_fn,
-            email=email,
+        result = reg.register(
+            email=current_email,
             password=password,
-            browser_mode=browser_mode,
-            max_retries=max_retries,
-            extra_config=extra_config,
+            otp_callback=otp_cb,
         )
-        result = adapter.run(context)
-        if not result or not result.success:
-            raise RuntimeError(result.error_message if result else "注册失败")
 
-        return adapter.build_account(result, password)
+        cookies_data = result.get("cookies", {})
+        return Account(
+            platform="chatgpt",
+            email=result["email"],
+            password=result["password"],
+            status=AccountStatus.REGISTERED,
+            extra={
+                "cookies": json.dumps(cookies_data) if isinstance(cookies_data, dict) else str(cookies_data),
+                "cookie_file": result.get("cookie_file", ""),
+                "session_token": result.get("session_token", ""),
+                "name": result.get("name", ""),
+                "register_mode": "protocol_v2",
+            },
+        )
+
+    def _register_drission(self, email, password, proxy, extra_config, log_fn) -> Account:
+        """使用 DrissionPage 浏览器注册（CF Worker 域名邮箱专用）"""
+        from platforms.chatgpt.drission_register import register_chatgpt
+
+        cfworker_api_url = extra_config.get("cfworker_api_url", "")
+        cfworker_admin_token = extra_config.get("cfworker_admin_token", "")
+        cfworker_custom_auth = extra_config.get("cfworker_custom_auth", "")
+
+        # 域名优先级: enabled_domains > domain > 空
+        cfworker_domain = extra_config.get("cfworker_domain", "")
+        enabled_domains = extra_config.get("cfworker_enabled_domains", "")
+        if enabled_domains:
+            try:
+                domains = json.loads(enabled_domains) if isinstance(enabled_domains, str) else enabled_domains
+                if isinstance(domains, list) and domains:
+                    cfworker_domain = random.choice(domains)
+            except Exception:
+                pass
+
+        if not cfworker_api_url:
+            raise RuntimeError("CF Worker API URL 未配置，无法使用 DrissionPage 注册")
+
+        headless = str(extra_config.get("drission_headless", "1")).strip().lower() in ("1", "true", "yes", "on")
+        log_fn(f"[DrissionPage] 使用 CF Worker 域名邮箱注册 (domain={cfworker_domain}, headless={headless})")
+
+        result = register_chatgpt(
+            email=email or "",
+            password=password or "",
+            proxy=proxy or "http://127.0.0.1:7890",
+            headless=headless,
+            cfworker_api_url=cfworker_api_url,
+            cfworker_admin_token=cfworker_admin_token,
+            cfworker_custom_auth=cfworker_custom_auth,
+            cfworker_domain=cfworker_domain,
+        )
+
+        if not result.get("success"):
+            raise RuntimeError(f"DrissionPage 注册失败: {result.get('error', '未知错误')}")
+
+        log_fn(f"[DrissionPage] 注册成功: {result.get('email')}")
+
+        cookies_data = result.get("cookies", {})
+        return Account(
+            platform="chatgpt",
+            email=result["email"],
+            password=result.get("password", password),
+            status=AccountStatus.REGISTERED,
+            extra={
+                "cookies": json.dumps(cookies_data) if isinstance(cookies_data, dict) else str(cookies_data),
+                "cookie_file": result.get("cookie_file", ""),
+                "session_token": result.get("session_token", ""),
+                "access_token": result.get("access_token", ""),
+                "name": result.get("name", ""),
+                "register_mode": "drission_cfworker",
+                "mail_provider": "cfworker",
+            },
+        )
 
     def get_platform_actions(self) -> list:
         return [

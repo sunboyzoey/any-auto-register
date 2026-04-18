@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { App, Card, Form, Input, Select, Button, message, Tabs, Space, Tag, Typography, Modal, QRCode, Switch, Alert } from 'antd'
+import { App, Card, Form, Input, Select, Button, message, Tabs, Space, Tag, Typography, Modal, QRCode, Switch, Row, Col, Divider, InputNumber, theme } from 'antd'
 import {
   SaveOutlined,
   EyeOutlined,
@@ -12,6 +12,10 @@ import {
   SyncOutlined,
   PlusOutlined,
   LockOutlined,
+  LinkOutlined,
+  DeleteOutlined,
+  ThunderboltOutlined,
+  GlobalOutlined,
 } from '@ant-design/icons'
 import { parseBooleanConfigValue } from '@/lib/configValueParsers'
 import { apiFetch } from '@/lib/utils'
@@ -75,142 +79,7 @@ const TAB_ITEMS = [
     key: 'mailbox',
     label: '邮箱服务',
     icon: <MailOutlined />,
-    sections: [
-      {
-        title: '默认邮箱服务',
-        desc: '选择注册时使用的邮箱类型',
-        fields: [
-          { key: 'mail_provider', label: '邮箱服务', type: 'select' },
-          { key: 'mailbox_otp_timeout_seconds', label: '邮箱验证码等待秒数', placeholder: '例如 60 / 90 / 120' },
-        ],
-      },
-      {
-        title: 'Laoudo',
-        desc: '固定邮箱，手动配置',
-        fields: [
-          { key: 'laoudo_email', label: '邮箱地址', placeholder: 'xxx@laoudo.com' },
-          { key: 'laoudo_account_id', label: 'Account ID', placeholder: '563' },
-          { key: 'laoudo_auth', label: 'JWT Token', placeholder: 'eyJ...', secret: true },
-        ],
-      },
-      {
-        title: 'Freemail',
-        desc: '基于 Cloudflare Worker 的自建邮箱，支持管理员令牌或账号密码认证',
-        fields: [
-          { key: 'freemail_api_url', label: 'API URL', placeholder: 'https://mail.example.com' },
-          { key: 'freemail_admin_token', label: '管理员令牌', secret: true },
-          { key: 'freemail_username', label: '用户名（可选）' },
-          { key: 'freemail_password', label: '密码（可选）', secret: true },
-          { key: 'freemail_domain', label: '邮箱域名（可选）', placeholder: 'example.com' },
-        ],
-      },
-      {
-        title: 'MoeMail',
-        desc: '自动注册账号并生成临时邮箱',
-        fields: [
-          { key: 'moemail_api_url', label: 'API URL', placeholder: 'https://sall.cc' },
-          { key: 'moemail_api_key', label: 'API Key', secret: true },
-        ],
-      },
-      {
-        title: 'SkyMail',
-        desc: 'CloudMail 兼容接口（addUser / emailList）',
-        fields: [
-          { key: 'skymail_api_base', label: 'API Base', placeholder: 'https://api.skymail.ink' },
-          { key: 'skymail_token', label: 'Authorization Token', secret: true },
-          { key: 'skymail_domain', label: '邮箱域名', placeholder: 'mail.example.com' },
-        ],
-      },
-      {
-        title: 'CloudMail',
-        desc: 'CloudMail 口令模式（genToken + emailList）',
-        fields: [
-          { key: 'cloudmail_api_base', label: 'API Base', placeholder: 'https://cloudmail.example.com' },
-          { key: 'cloudmail_admin_email', label: '管理员邮箱（可选）', placeholder: 'admin@example.com' },
-          { key: 'cloudmail_admin_password', label: '管理员密码', secret: true },
-          { key: 'cloudmail_domain', label: '邮箱域名（可选）', placeholder: 'mail.example.com,mail2.example.com' },
-          { key: 'cloudmail_subdomain', label: '子域名（可选）', placeholder: 'pool-a' },
-          { key: 'cloudmail_timeout', label: '请求超时秒数', placeholder: '30' },
-        ],
-      },
-      {
-        title: 'YYDS Mail / MaliAPI',
-        desc: '基于 API Key 创建临时邮箱并轮询收件箱消息',
-        fields: [
-          { key: 'maliapi_base_url', label: 'API URL', placeholder: 'https://maliapi.215.im/v1' },
-          { key: 'maliapi_api_key', label: 'API Key', secret: true },
-          { key: 'maliapi_domain', label: '邮箱域名（可选）', placeholder: 'example.com' },
-          { key: 'maliapi_auto_domain_strategy', label: '自动域名策略', type: 'select' },
-        ],
-      },
-      {
-        title: 'AppleMail / 小苹果',
-        desc: '读取本地邮箱池文件，通过 refresh_token + client_id 调用小苹果取件接口；支持在本页直接导入 JSON',
-        fields: [
-          { key: 'applemail_base_url', label: 'API URL', placeholder: 'https://www.appleemail.top' },
-          { key: 'applemail_pool_dir', label: '邮箱池目录', placeholder: 'mail' },
-          { key: 'applemail_pool_file', label: '当前邮箱池文件（可选）', placeholder: '留空则自动读取目录中最新文件' },
-          { key: 'applemail_mailboxes', label: '轮询文件夹', placeholder: 'INBOX,Junk' },
-        ],
-      },
-      {
-        title: 'GPTMail',
-        desc: '基于 GPTMail API 生成临时邮箱并轮询邮件；若已知本站可用域名，也可本地拼装随机地址',
-        fields: [
-          { key: 'gptmail_base_url', label: 'API URL', placeholder: 'https://mail.chatgpt.org.uk' },
-          { key: 'gptmail_api_key', label: 'API Key', secret: true, placeholder: 'gpt-test' },
-          { key: 'gptmail_domain', label: '邮箱域名（可选）', placeholder: 'example.com' },
-        ],
-      },
-      {
-        title: 'OpenTrashMail',
-        desc: '对接 opentrashmail 服务；可直接轮询 /json/<email>，也支持已知域名时本地拼装随机地址',
-        fields: [
-          { key: 'opentrashmail_api_url', label: 'API URL', placeholder: 'http://mail.example.com:8085' },
-          { key: 'opentrashmail_domain', label: '邮箱域名（可选）', placeholder: 'xiyoufm.com' },
-          { key: 'opentrashmail_password', label: '站点密码（可选）', secret: true, placeholder: '启用 PASSWORD 时填写' },
-        ],
-      },
-      {
-        title: 'TempMail.lol',
-        desc: '自动生成邮箱，无需配置，需要代理访问（CN IP 被封）',
-        fields: [],
-      },
-      {
-        title: 'DuckMail',
-        desc: '自动生成邮箱，随机创建账号',
-        fields: [
-          { key: 'duckmail_api_url', label: 'Web URL', placeholder: 'https://www.duckmail.sbs' },
-          { key: 'duckmail_provider_url', label: 'Provider URL', placeholder: 'https://api.duckmail.sbs' },
-          { key: 'duckmail_bearer', label: 'Bearer Token', placeholder: 'kevin273945', secret: true },
-          { key: 'duckmail_domain', label: '自定义域名', placeholder: '留空则从 Provider URL 推导' },
-          { key: 'duckmail_api_key', label: 'API Key（私有域名）', placeholder: 'dk_xxx（domain.duckmail.sbs 获取）', secret: true },
-        ],
-      },
-      {
-        title: 'CF Worker 自建邮箱',
-        desc: '基于 Cloudflare Worker 的自建临时邮箱服务',
-        fields: [
-          { key: 'cfworker_api_url', label: 'API URL', placeholder: 'https://apimail.example.com' },
-          { key: 'cfworker_admin_token', label: '管理员 Token', secret: true },
-          { key: 'cfworker_custom_auth', label: '站点密码', secret: true },
-          { key: 'cfworker_subdomain', label: '固定子域名', placeholder: 'mail / pool-a' },
-          { key: 'cfworker_random_subdomain', label: '随机子域名', type: 'boolean' },
-          { key: 'cfworker_random_name_subdomain', label: '随机姓名子域名', type: 'boolean' },
-          { key: 'cfworker_fingerprint', label: 'Fingerprint', placeholder: '6703363b...' },
-        ],
-      },
-      {
-        title: 'LuckMail',
-        desc: 'ChatGPT 走购买邮箱，其他平台继续走订单接码老逻辑',
-        fields: [
-          { key: 'luckmail_base_url', label: '平台地址', placeholder: 'https://mails.luckyous.com' },
-          { key: 'luckmail_api_key', label: 'API Key', secret: true },
-          { key: 'luckmail_email_type', label: '邮箱类型（可选）', placeholder: 'ms_graph / ms_imap / self_built' },
-          { key: 'luckmail_domain', label: '邮箱域名（可选）', placeholder: 'outlook.com / gmail.com' },
-        ],
-      },
-    ],
+    sections: [],
   },
   {
     key: 'captcha',
@@ -347,12 +216,6 @@ const TAB_ITEMS = [
     ],
   },
   {
-    key: 'contribution',
-    label: '贡献',
-    icon: <PlusOutlined />,
-    sections: [],
-  },
-  {
     key: 'integrations',
     label: '插件',
     icon: <ApiOutlined />,
@@ -387,19 +250,7 @@ interface TabConfig {
   sections: SectionConfig[]
 }
 
-interface AppleMailPoolPreviewItem {
-  index: number
-  email: string
-  mailbox: string
-}
 
-interface AppleMailPoolSnapshot {
-  filename: string
-  pool_dir: string
-  count: number
-  items: AppleMailPoolPreviewItem[]
-  truncated: boolean
-}
 
 function formatResultText(data: unknown) {
   if (typeof data === 'string') return data
@@ -445,56 +296,12 @@ function parseStoredDomainList(value: unknown): string[] {
   )
 }
 
-const CONTRIBUTION_REDEEM_OPTIONS = [10, 100, 1000]
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
-  return value as Record<string, unknown>
-}
 
-function pickRecord(value: Record<string, unknown> | null, keys: string[]): Record<string, unknown> | null {
-  if (!value) return null
-  for (const key of keys) {
-    const record = asRecord(value[key])
-    if (record) return record
-  }
-  return null
-}
 
-function pickString(value: Record<string, unknown> | null, keys: string[]): string {
-  if (!value) return ''
-  for (const key of keys) {
-    const text = String(value[key] ?? '').trim()
-    if (text) return text
-  }
-  return ''
-}
 
-function pickNumber(value: Record<string, unknown> | null, keys: string[]): number | null {
-  if (!value) return null
-  for (const key of keys) {
-    const raw = value[key]
-    if (typeof raw === 'number' && Number.isFinite(raw)) return raw
-    if (typeof raw === 'string') {
-      const parsed = Number.parseFloat(raw)
-      if (Number.isFinite(parsed)) return parsed
-    }
-  }
-  return null
-}
 
-function formatDisplayNumber(value: number | null, digits = 0): string {
-  if (value === null || !Number.isFinite(value)) return '-'
-  return value.toLocaleString('zh-CN', {
-    minimumFractionDigits: digits,
-    maximumFractionDigits: digits,
-  })
-}
 
-function formatDisplayPercent(value: number | null): string {
-  if (value === null || !Number.isFinite(value)) return '-'
-  return `${value.toFixed(2)}%`
-}
 
 function ConfigField({ field }: { field: FieldConfig }) {
   const [showSecret, setShowSecret] = useState(false)
@@ -543,282 +350,240 @@ function ConfigSection({ section }: { section: SectionConfig }) {
 }
 
 function CFWorkerDomainPoolSection({ form }: { form: any }) {
+  const { message: msg } = App.useApp()
+  const { token: themeToken } = theme.useToken()
   const watchedDomains = Form.useWatch('cfworker_domains', form) || []
   const watchedEnabledDomains = Form.useWatch('cfworker_enabled_domains', form) || []
   const normalizedDomains = normalizeDomainList(watchedDomains)
-  const enabledDomains = normalizeDomainList(watchedEnabledDomains).filter((domain) => normalizedDomains.includes(domain))
+  const enabledDomains = normalizeDomainList(watchedEnabledDomains).filter((d) => normalizedDomains.includes(d))
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState<{
+    ok: boolean; message?: string; error?: string
+    detected_domains?: string[]; warning?: string; version?: string
+  } | null>(null)
 
-  const updateEnabledDomains = (nextDomains: string[]) => {
-    form.setFieldValue('cfworker_enabled_domains', normalizeDomainList(nextDomains))
+  const updateEnabledDomains = (next: string[]) => {
+    form.setFieldValue('cfworker_enabled_domains', normalizeDomainList(next))
   }
 
-  const toggleEnabledDomain = (domain: string, checked: boolean) => {
-    if (checked) {
-      updateEnabledDomains([...enabledDomains, domain])
-      return
+  const handleTestConnection = async () => {
+    const apiUrl = form.getFieldValue('cfworker_api_url')
+    const adminToken = form.getFieldValue('cfworker_admin_token')
+    const customAuth = form.getFieldValue('cfworker_custom_auth')
+    if (!apiUrl) { msg.error('请先填写 API URL'); return }
+    setTesting(true)
+    setTestResult(null)
+    try {
+      const res = await apiFetch('/config/cfworker/test', {
+        method: 'POST',
+        body: JSON.stringify({ api_url: apiUrl, admin_token: adminToken, custom_auth: customAuth }),
+      })
+      setTestResult(res)
+      if (res.ok) {
+        const domains: string[] = res.detected_domains || []
+        msg.success(res.message || `连接成功，共 ${domains.length} 个域名`)
+        if (res.warning) msg.warning(res.warning)
+        if (domains.length > 0) {
+          const cur = normalizeDomainList(form.getFieldValue('cfworker_domains'))
+          const curEn = normalizeDomainList(form.getFieldValue('cfworker_enabled_domains'))
+          const nextD = Array.isArray(form.getFieldValue('cfworker_domains')) ? [...form.getFieldValue('cfworker_domains')] : []
+          const nextE = [...curEn]
+          let added = 0
+          for (const d of domains) {
+            if (!cur.includes(d)) { nextD.push(d); added++ }
+            if (!curEn.includes(d)) nextE.push(d)
+          }
+          form.setFieldValue('cfworker_domains', nextD)
+          form.setFieldValue('cfworker_enabled_domains', nextE)
+          if (added > 0) msg.info(`已自动添加 ${added} 个新域名`)
+        }
+      } else {
+        msg.error(res.error || '连接失败')
+      }
+    } catch (e: any) {
+      setTestResult({ ok: false, error: e.message })
+      msg.error(`测试失败: ${e.message}`)
+    } finally {
+      setTesting(false)
     }
-    updateEnabledDomains(enabledDomains.filter((item) => item !== domain))
+  }
+
+  const cardStyle = { marginBottom: 20, borderRadius: themeToken.borderRadius }
+  const sectionLabelStyle: React.CSSProperties = {
+    fontSize: 12, fontWeight: 500, color: themeToken.colorTextSecondary, marginBottom: 6, textTransform: 'uppercase' as const, letterSpacing: 0.5,
   }
 
   return (
-    <Card
-      title="CF Worker 域名池"
-      extra={<span style={{ fontSize: 12, color: '#7a8ba3' }}>注册时会从已启用域名中随机选择一个</span>}
-      style={{ marginBottom: 16 }}
-    >
-      <Form.List name="cfworker_domains">
-        {(fields, { add, remove }) => (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {fields.map((field) => (
-              <Space key={field.key} align="start" style={{ display: 'flex' }}>
-                <Form.Item
-                  {...field}
-                  label={field.name === 0 ? '全部域名' : ''}
-                  style={{ flex: 1, marginBottom: 0 }}
-                  rules={[
-                    {
-                      validator: async (_, value) => {
-                        if (!String(value || '').trim()) {
-                          throw new Error('请输入域名')
-                        }
-                      },
-                    },
-                  ]}
-                >
-                  <Input placeholder="example.com" />
-                </Form.Item>
-                <Button
-                  danger
-                  onClick={() => {
-                    const currentDomains = Array.isArray(form.getFieldValue('cfworker_domains'))
-                      ? [...form.getFieldValue('cfworker_domains')]
-                      : []
-                    const removedDomain = String(currentDomains[field.name] || '').trim().toLowerCase().replace(/^@/, '')
-                    remove(field.name)
-                    if (!removedDomain) return
-                    const enabledDomains = normalizeDomainList(form.getFieldValue('cfworker_enabled_domains'))
-                    form.setFieldValue(
-                      'cfworker_enabled_domains',
-                      enabledDomains.filter((domain) => domain !== removedDomain),
-                    )
-                  }}
-                >
-                  删除
-                </Button>
-              </Space>
-            ))}
-            {fields.length === 0 ? (
-              <Typography.Text type="secondary">还没有配置域名。添加后即可在下方选择启用项。</Typography.Text>
-            ) : null}
-            <Button type="dashed" onClick={() => add('')} icon={<PlusOutlined />} block>
-              添加域名
-            </Button>
+    <>
+      {/* ═══════════════════ 连接配置 ═══════════════════ */}
+      <Card
+        title={<Space><LinkOutlined />CF Worker 连接</Space>}
+        style={cardStyle}
+        extra={
+          <Button type="primary" icon={<ThunderboltOutlined />} loading={testing} onClick={handleTestConnection} size="small">
+            {testing ? '检测中…' : '测试连接'}
+          </Button>
+        }
+      >
+        <Row gutter={16}>
+          <Col span={16}>
+            <Form.Item name="cfworker_api_url" label="API URL" style={{ marginBottom: 12 }}>
+              <Input placeholder="https://temp-api.example.com" allowClear />
+            </Form.Item>
+          </Col>
+          <Col span={8}>
+            <Form.Item name="cfworker_fingerprint" label="Fingerprint" style={{ marginBottom: 12 }}>
+              <Input placeholder="可选" allowClear style={{ fontFamily: 'monospace', fontSize: 12 }} />
+            </Form.Item>
+          </Col>
+        </Row>
+        <Row gutter={16}>
+          <Col span={12}>
+            <Form.Item name="cfworker_admin_token" label="管理员 Token" style={{ marginBottom: 12 }}>
+              <Input.Password placeholder="x-admin-auth 认证" />
+            </Form.Item>
+          </Col>
+          <Col span={12}>
+            <Form.Item name="cfworker_custom_auth" label="站点密码" style={{ marginBottom: 12 }}>
+              <Input.Password placeholder="x-custom-auth（可选）" />
+            </Form.Item>
+          </Col>
+        </Row>
+
+        {testResult && (
+          <div style={{
+            padding: '10px 14px', borderRadius: themeToken.borderRadius,
+            background: testResult.ok ? themeToken.colorSuccessBg : themeToken.colorErrorBg,
+            border: `1px solid ${testResult.ok ? themeToken.colorSuccessBorder : themeToken.colorErrorBorder}`,
+          }}>
+            {testResult.ok ? (
+              <>
+                <Space><CheckCircleOutlined style={{ color: themeToken.colorSuccess }} /><span style={{ fontWeight: 500 }}>{testResult.message}</span>{testResult.version && <Tag>{testResult.version}</Tag>}</Space>
+                {testResult.detected_domains && testResult.detected_domains.length > 0 && (
+                  <div style={{ marginTop: 8 }}>{testResult.detected_domains.map((d) => <Tag key={d} color="blue" style={{ marginBottom: 4 }}>{d}</Tag>)}</div>
+                )}
+                {testResult.warning && <div style={{ marginTop: 6, fontSize: 12, color: themeToken.colorWarning }}>{testResult.warning}</div>}
+              </>
+            ) : (
+              <Space><CloseCircleOutlined style={{ color: themeToken.colorError }} /><span>{testResult.error}</span></Space>
+            )}
           </div>
         )}
-      </Form.List>
+      </Card>
 
-      <Form.Item name="cfworker_enabled_domains" hidden>
-        <Select mode="multiple" options={normalizedDomains.map((domain) => ({ label: domain, value: domain }))} />
-      </Form.Item>
-
-      <div style={{ marginTop: 16 }}>
-        <div style={{ marginBottom: 8, fontWeight: 500 }}>已启用域名</div>
-        {enabledDomains.length > 0 ? (
-          <Space wrap>
-            {enabledDomains.map((domain) => (
-              <Tag
-                key={domain}
-                color="blue"
-                closable
-                onClose={(event) => {
-                  event.preventDefault()
-                  updateEnabledDomains(enabledDomains.filter((item) => item !== domain))
-                }}
-              >
-                {domain}
-              </Tag>
-            ))}
-          </Space>
-        ) : (
-          <Typography.Text type="secondary">暂无启用域名，点击下方域名即可启用。</Typography.Text>
-        )}
-      </div>
-
-      <div style={{ marginTop: 16 }}>
-        <div style={{ marginBottom: 8, fontWeight: 500 }}>点击切换启用状态</div>
-        {normalizedDomains.length > 0 ? (
-          <Space wrap>
-            {normalizedDomains.map((domain) => (
-              <Tag.CheckableTag
-                key={domain}
-                checked={enabledDomains.includes(domain)}
-                onChange={(checked) => toggleEnabledDomain(domain, checked)}
-              >
-                {domain}
-              </Tag.CheckableTag>
-            ))}
-          </Space>
-        ) : (
-          <Typography.Text type="secondary">请先在上方添加域名。</Typography.Text>
-        )}
-      </div>
-      <Typography.Text type="secondary" style={{ display: 'block', marginTop: 12 }}>
-        仅已启用域名会参与注册；点击已启用标签可直接移除。
-      </Typography.Text>
-    </Card>
-  )
-}
-
-function AppleMailPoolImportSection({ form }: { form: any }) {
-  const [content, setContent] = useState('')
-  const [filename, setFilename] = useState('')
-  const [importing, setImporting] = useState(false)
-  const [snapshot, setSnapshot] = useState<AppleMailPoolSnapshot | null>(null)
-  const [loadingSnapshot, setLoadingSnapshot] = useState(false)
-  const watchedPoolDir = Form.useWatch('applemail_pool_dir', form) || 'mail'
-  const watchedPoolFile = Form.useWatch('applemail_pool_file', form) || ''
-
-  const loadSnapshot = async () => {
-    setLoadingSnapshot(true)
-    try {
-      const params = new URLSearchParams()
-      if (String(watchedPoolDir || '').trim()) {
-        params.set('pool_dir', String(watchedPoolDir || '').trim())
-      }
-      if (String(watchedPoolFile || '').trim()) {
-        params.set('pool_file', String(watchedPoolFile || '').trim())
-      }
-      const result = await apiFetch(`/config/applemail/pool?${params.toString()}`)
-      setSnapshot(result)
-    } catch {
-      setSnapshot(null)
-    } finally {
-      setLoadingSnapshot(false)
-    }
-  }
-
-  useEffect(() => {
-    void loadSnapshot()
-  }, [watchedPoolDir, watchedPoolFile])
-
-  const handleImport = async () => {
-    if (!content.trim()) {
-      message.error('请输入 JSON 或 TXT 内容')
-      return
-    }
-
-    setImporting(true)
-    try {
-      const poolDir = String(form.getFieldValue('applemail_pool_dir') || 'mail').trim() || 'mail'
-      const result = await apiFetch('/config/applemail/import', {
-        method: 'POST',
-        body: JSON.stringify({
-          content,
-          filename,
-          pool_dir: poolDir,
-          bind_to_config: true,
-        }),
-      })
-
-      form.setFieldsValue({
-        mail_provider: 'applemail',
-        applemail_pool_dir: result.pool_dir,
-        applemail_pool_file: result.filename,
-      })
-      setSnapshot({
-        filename: result.filename,
-        pool_dir: result.pool_dir,
-        count: result.count,
-        items: result.items || [],
-        truncated: Boolean(result.truncated),
-      })
-      setContent('')
-      setFilename('')
-      message.success(`导入成功，共 ${result.count} 个邮箱，已绑定 ${result.filename}`)
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'AppleMail 内容导入失败'
-      message.error(errorMessage || 'AppleMail 内容导入失败')
-    } finally {
-      setImporting(false)
-    }
-  }
-
-  return (
-    <Card
-      title="AppleMail 内容导入"
-      extra={<span style={{ fontSize: 12, color: '#7a8ba3' }}>支持 JSON 或 TXT；导入后自动绑定当前邮箱池文件</span>}
-      style={{ marginBottom: 16 }}
-    >
-      <Space direction="vertical" style={{ width: '100%' }} size={12}>
-        <Typography.Text type="secondary">
-          支持数组/对象 JSON，也支持 `mail/*.txt` 那种每行一条的 `email----password----client_id----refresh_token` 格式。常见字段别名如 `clientId` / `refreshToken` / `folder` 会自动规范化。
-        </Typography.Text>
-        <Input
-          value={filename}
-          onChange={(event) => setFilename(event.target.value)}
-          placeholder="可选文件名，例如 applemail_hotmail.json；留空自动生成"
-        />
-        <Input.TextArea
-          value={content}
-          onChange={(event) => setContent(event.target.value)}
-          rows={10}
-          placeholder={'[\n  {\n    "email": "demo@example.com",\n    "clientId": "xxxx",\n    "refreshToken": "xxxx",\n    "folder": "INBOX"\n  }\n]\n\n或粘贴 TXT:\ndemo@example.com----password----client_id----refresh_token'}
-          style={{ fontFamily: 'monospace' }}
-        />
-        <Space style={{ width: '100%', justifyContent: 'space-between' }}>
-          <Button
-            danger
-            onClick={() => {
-              setContent('')
-              setFilename('')
-            }}
-          >
-            清空
-          </Button>
-          <Space>
-            <Button onClick={() => void loadSnapshot()} loading={loadingSnapshot}>
-              刷新预览
-            </Button>
-            <Button type="primary" onClick={handleImport} loading={importing}>
-              确认导入
-            </Button>
-          </Space>
-        </Space>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <Tag color="blue">已导入: {snapshot?.count || 0} 个邮箱</Tag>
-          {snapshot?.filename ? <Typography.Text type="secondary">当前文件: {snapshot.filename}</Typography.Text> : null}
-        </div>
-
-        <div
-          style={{
-            border: '1px solid rgba(127,127,127,0.25)',
-            borderRadius: 8,
-            padding: 12,
-            background: 'rgba(127,127,127,0.06)',
-            minHeight: 88,
-            maxHeight: 260,
-            overflowY: 'auto',
-            fontFamily: 'monospace',
-            fontSize: 13,
-            lineHeight: 1.7,
-          }}
-        >
-          {snapshot?.items?.length ? (
-            snapshot.items.map((item) => (
-              <div key={`${item.index}-${item.email}`}>
-                {item.index}. {item.email}
-              </div>
-            ))
+      {/* ═══════════════════ 域名管理 ═══════════════════ */}
+      <Card title={<Space><GlobalOutlined />域名管理</Space>} style={cardStyle}>
+        <div style={sectionLabelStyle}>已启用域名 — 注册时随机选择</div>
+        <div style={{
+          padding: '10px 14px', borderRadius: themeToken.borderRadius,
+          background: themeToken.colorFillAlter, border: `1px solid ${themeToken.colorBorderSecondary}`,
+          marginBottom: 16, minHeight: 42,
+        }}>
+          {enabledDomains.length > 0 ? (
+            <Space wrap size={[6, 6]}>
+              {enabledDomains.map((d) => (
+                <Tag key={d} color="blue" closable onClose={(e) => { e.preventDefault(); updateEnabledDomains(enabledDomains.filter((x) => x !== d)) }} style={{ margin: 0 }}>{d}</Tag>
+              ))}
+            </Space>
           ) : (
-            <Typography.Text type="secondary">当前还没有可预览的邮箱池内容。</Typography.Text>
+            <Typography.Text type="secondary" style={{ fontSize: 13 }}>暂无 — 请点击「测试连接」自动获取，或手动添加</Typography.Text>
           )}
         </div>
-        {snapshot?.truncated ? (
-          <Typography.Text type="secondary">预览只展示前 100 个邮箱，完整内容以文件为准。</Typography.Text>
-        ) : null}
-      </Space>
-    </Card>
+
+        <div style={sectionLabelStyle}>全部域名 — 点击切换启用状态</div>
+        <div style={{
+          padding: '10px 14px', borderRadius: themeToken.borderRadius,
+          background: themeToken.colorFillAlter, border: `1px solid ${themeToken.colorBorderSecondary}`,
+          marginBottom: 16, minHeight: 42,
+        }}>
+          {normalizedDomains.length > 0 ? (
+            <Space wrap size={[6, 6]}>
+              {normalizedDomains.map((d) => (
+                <Tag.CheckableTag key={d} checked={enabledDomains.includes(d)} onChange={(checked) => {
+                  if (checked) updateEnabledDomains([...enabledDomains, d])
+                  else updateEnabledDomains(enabledDomains.filter((x) => x !== d))
+                }}>{d}</Tag.CheckableTag>
+              ))}
+            </Space>
+          ) : (
+            <Typography.Text type="secondary" style={{ fontSize: 13 }}>点击上方「测试连接」自动获取域名</Typography.Text>
+          )}
+        </div>
+
+        <Form.List name="cfworker_domains">
+          {(fields, { add, remove }) => (
+            <>
+              {fields.map((field) => (
+                <Row key={field.key} gutter={8} style={{ marginBottom: 8 }}>
+                  <Col flex="auto">
+                    <Form.Item {...field} noStyle rules={[{ required: true, message: '请输入域名' }]}>
+                      <Input placeholder="example.com" size="small" style={{ fontFamily: 'monospace' }} />
+                    </Form.Item>
+                  </Col>
+                  <Col flex="32px">
+                    <Button type="text" danger size="small" icon={<DeleteOutlined />} onClick={() => {
+                      const all = Array.isArray(form.getFieldValue('cfworker_domains')) ? [...form.getFieldValue('cfworker_domains')] : []
+                      const removed = String(all[field.name] || '').trim().toLowerCase().replace(/^@/, '')
+                      remove(field.name)
+                      if (removed) form.setFieldValue('cfworker_enabled_domains', normalizeDomainList(form.getFieldValue('cfworker_enabled_domains')).filter((x) => x !== removed))
+                    }} />
+                  </Col>
+                </Row>
+              ))}
+              <Button type="dashed" size="small" onClick={() => add('')} icon={<PlusOutlined />} block>手动添加域名</Button>
+            </>
+          )}
+        </Form.List>
+        <Form.Item name="cfworker_enabled_domains" hidden><Select mode="multiple" /></Form.Item>
+      </Card>
+
+      {/* ═══════════════════ 邮箱生成规则 ═══════════════════ */}
+      <Card title={<Space><MailOutlined />邮箱生成规则</Space>} style={cardStyle}>
+        <Row gutter={16} align="top">
+          <Col span={8}>
+            <Form.Item name="cfworker_subdomain" label="子域名前缀" extra="格式: xxx@前缀.域名" style={{ marginBottom: 12 }}>
+              <Select allowClear placeholder="不使用"
+                options={[
+                  { value: 'mail', label: 'mail' },
+                  { value: 'auto', label: 'auto' },
+                  { value: 'reg', label: 'reg' },
+                  { value: 'tmp', label: 'tmp' },
+                  ...normalizedDomains.map((d) => {
+                    const parts = d.split('.')
+                    return parts.length > 2 ? { value: parts[0], label: parts[0] } : null
+                  }).filter(Boolean) as any[],
+                ].filter((opt, idx, arr) => arr.findIndex((o: any) => o.value === opt.value) === idx)}
+                dropdownRender={(menu) => (
+                  <>{menu}<Divider style={{ margin: '4px 0' }} />
+                    <div style={{ padding: '4px 8px' }}>
+                      <Input size="small" placeholder="自定义前缀，回车确认" onPressEnter={(e) => {
+                        const val = (e.target as HTMLInputElement).value.trim()
+                        if (val) { form.setFieldValue('cfworker_subdomain', val); (e.target as HTMLInputElement).value = '' }
+                      }} />
+                    </div>
+                  </>
+                )}
+              />
+            </Form.Item>
+          </Col>
+          <Col span={5}>
+            <Form.Item name="cfworker_random_subdomain" label="随机前缀" valuePropName="checked" style={{ marginBottom: 12 }}>
+              <Switch checkedChildren="开" unCheckedChildren="关" />
+            </Form.Item>
+          </Col>
+          <Col span={5}>
+            <Form.Item name="cfworker_random_name_subdomain" label="姓名前缀" valuePropName="checked" style={{ marginBottom: 12 }}>
+              <Switch checkedChildren="开" unCheckedChildren="关" />
+            </Form.Item>
+          </Col>
+          <Col span={6}>
+            <Form.Item name="mailbox_otp_timeout_seconds" label="验证码超时(秒)" style={{ marginBottom: 12 }}>
+              <InputNumber min={30} max={300} placeholder="120" style={{ width: '100%' }} />
+            </Form.Item>
+          </Col>
+        </Row>
+      </Card>
+    </>
   )
 }
 
@@ -1061,360 +826,7 @@ function IntegrationsPanel() {
   )
 }
 
-function ContributionPanel({
-  form,
-  onSave,
-  saving,
-  saved,
-}: {
-  form: any
-  onSave: () => Promise<void>
-  saving: boolean
-  saved: boolean
-}) {
-  const [loadingStats, setLoadingStats] = useState(false)
-  const [redeeming, setRedeeming] = useState(false)
-  const [creatingKey, setCreatingKey] = useState(false)
-  const [redeemAmount, setRedeemAmount] = useState<number>(CONTRIBUTION_REDEEM_OPTIONS[0])
-  const [statsResponse, setStatsResponse] = useState<Record<string, unknown> | null>(null)
-  const [redeemResponse, setRedeemResponse] = useState<Record<string, unknown> | null>(null)
-  const [statsError, setStatsError] = useState('')
 
-  const contributionEnabled = Form.useWatch('contribution_enabled', form)
-  const contributionServerUrl = String(Form.useWatch('contribution_server_url', form) || '').trim()
-  const contributionKey = String(Form.useWatch('contribution_key', form) || '').trim()
-
-  const rawData = asRecord(statsResponse?.['data'])
-  const serverInfo = pickRecord(rawData, ['server_info', 'server', 'server_stats', 'stats']) || rawData
-  const keyInfo = pickRecord(rawData, ['key_info', 'keyInfo', 'public_key_info', 'quota']) || rawData
-
-  const keyFromStats = pickString(keyInfo, ['key', 'public_key', 'api_key']) || contributionKey
-  const keyBalance =
-    pickNumber(keyInfo, ['balance_usd', 'balance', 'current_balance', 'remaining_balance_usd']) ??
-    pickNumber(rawData, ['balance_usd', 'balance', 'current_balance'])
-  const keySource = pickString(keyInfo, ['source', 'key_source', 'origin']) || '-'
-  const boundAccounts =
-    pickNumber(keyInfo, ['bound_account_count', 'bind_account_count', 'bound_accounts', 'account_count']) ??
-    (Array.isArray(keyInfo?.['accounts']) ? keyInfo['accounts'].length : null)
-  const settlementAmount =
-    pickNumber(keyInfo, ['settlement_amount_usd', 'settlement_amount', 'settled_amount_usd']) ??
-    pickNumber(rawData, ['settlement_amount_usd', 'settlement_amount'])
-  const serverQuotaAccountCount = pickNumber(serverInfo, ['quota_account_count'])
-  const serverQuotaTotal = pickNumber(serverInfo, ['quota_total'])
-  const serverQuotaUsed = pickNumber(serverInfo, ['quota_used'])
-  const serverQuotaRemaining = pickNumber(serverInfo, ['quota_remaining'])
-  const serverQuotaUsedPercent = pickNumber(serverInfo, ['quota_used_percent'])
-  const serverQuotaRemainingPercent = pickNumber(serverInfo, ['quota_remaining_percent'])
-  const serverQuotaRemainingAccounts = pickNumber(serverInfo, ['quota_remaining_accounts'])
-  const redeemData = asRecord(redeemResponse?.['data']) || asRecord(redeemResponse)
-  const redeemCode = pickString(redeemData, ['code', 'redeem_code', 'voucher_code'])
-  const redeemedAmountUSD = pickNumber(redeemData, ['redeemed_amount_usd', 'redeemed_amount', 'amount_usd'])
-  const redeemSuccessText =
-    redeemResponse
-      ? `提现成功！额度：${redeemedAmountUSD !== null ? formatDisplayNumber(redeemedAmountUSD, 2) : '-'} 兑换码：${redeemCode || '-'}`
-      : ''
-
-  const fetchStats = async (silent = false, keyOverride?: string) => {
-    if (!contributionEnabled) {
-      if (!silent) message.warning('请先开启贡献功能')
-      return
-    }
-    if (!contributionServerUrl) {
-      if (!silent) message.error('请先填写服务器地址')
-      return
-    }
-
-    setLoadingStats(true)
-    setStatsError('')
-    try {
-      const data = await apiFetch('/contribution/quota-stats', {
-        method: 'POST',
-        body: JSON.stringify({
-          server_url: contributionServerUrl,
-          key: keyOverride ?? contributionKey,
-        }),
-      })
-      setStatsResponse(asRecord(data))
-      if (!silent) {
-        message.success('额度信息已刷新')
-      }
-    } catch (e: any) {
-      const detail = String(e?.message || '获取额度信息失败')
-      setStatsError(detail)
-      if (!silent) {
-        message.error(detail)
-      }
-    } finally {
-      setLoadingStats(false)
-    }
-  }
-
-  const doRedeem = async () => {
-    if (!contributionEnabled) {
-      message.warning('请先开启贡献功能')
-      return
-    }
-    if (!contributionServerUrl) {
-      message.error('请先填写服务器地址')
-      return
-    }
-    if (!contributionKey) {
-      message.error('请先填写 API Key')
-      return
-    }
-
-    const confirmed = window.confirm(`确认提现吗？\n将按 ${redeemAmount} 发起提现请求`)
-    if (!confirmed) return
-
-    setRedeeming(true)
-    try {
-      const data = await apiFetch('/contribution/redeem', {
-        method: 'POST',
-        body: JSON.stringify({
-          server_url: contributionServerUrl,
-          key: contributionKey,
-          amount_usd: redeemAmount,
-        }),
-      })
-      const result = asRecord(data)
-      const payload = asRecord(result?.['data']) || result
-      const code = pickString(payload, ['code', 'redeem_code', 'voucher_code'])
-      const amount = pickNumber(payload, ['redeemed_amount_usd', 'redeemed_amount', 'amount_usd'])
-      setRedeemResponse(result)
-      if (amount !== null || code) {
-        message.success(`提现成功！额度：${amount !== null ? formatDisplayNumber(amount, 2) : '-'} 兑换码：${code || '-'}`)
-      } else {
-        message.success('提现成功')
-      }
-      await fetchStats(true)
-    } catch (e: any) {
-      const detail = String(e?.message || '提现失败')
-      setRedeemResponse({ ok: false, error: detail })
-      message.error(detail)
-    } finally {
-      setRedeeming(false)
-    }
-  }
-
-  const doGenerateKey = async () => {
-    if (!contributionServerUrl) {
-      message.error('请先填写服务器地址')
-      return
-    }
-    setCreatingKey(true)
-    try {
-      const result = await apiFetch('/contribution/generate-key', {
-        method: 'POST',
-        body: JSON.stringify({
-          server_url: contributionServerUrl,
-        }),
-      })
-      const payload = asRecord(asRecord(result)?.data)
-      const generated = pickString(payload, ['key', 'api_key', 'public_key'])
-      if (!generated) {
-        throw new Error('服务端未返回可用 key')
-      }
-      form.setFieldValue('contribution_key', generated)
-      message.success('已新建并填充 API Key，请点击保存配置')
-      if (contributionEnabled) {
-        await fetchStats(true, generated)
-      }
-    } catch (e: any) {
-      message.error(String(e?.message || '请求新建 key 失败'))
-    } finally {
-      setCreatingKey(false)
-    }
-  }
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <Card title="配置">
-        <Alert
-          type="warning"
-          showIcon
-          banner
-          style={{ marginBottom: 12 }}
-          message="开启贡献模式后，注册成功账号将只上传到贡献服务器"
-          description={(
-            <>
-              <div>CPA / CodexProxy / Sub2API 自动上传会被停用，避免重复上报。</div>
-              <div>目前该功能在xem中转站测试中 有兴趣可以进群了解</div>
-              <div>中转站https://ai.xem8k5.top/ 群号634758974</div>
-            </>
-          )}
-        />
-        <Form.Item name="contribution_enabled" label="是否开启" valuePropName="checked">
-          <Switch checkedChildren="开启" unCheckedChildren="关闭" />
-        </Form.Item>
-        <Form.Item
-          name="contribution_server_url"
-          label="服务器地址"
-          rules={[{ required: true, message: '请输入服务器地址' }]}
-        >
-          <Input placeholder="http://new.xem8k5.top:7317/" />
-        </Form.Item>
-        <Form.Item name="contribution_key" label="API Key">
-          <Input
-            placeholder="留空可点击右侧按钮自动创建"
-            addonAfter={(
-              <Button
-                type="link"
-                size="small"
-                loading={creatingKey}
-                onClick={() => { void doGenerateKey() }}
-                style={{ paddingInline: 0 }}
-              >
-                没有key?请求新建
-              </Button>
-            )}
-          />
-        </Form.Item>
-        <Button type="primary" icon={<SaveOutlined />} onClick={onSave} loading={saving} block>
-          {saved ? '已保存 ✓' : '保存配置'}
-        </Button>
-      </Card>
-
-      <Card
-        title="信息"
-        extra={(
-          <Button loading={loadingStats} onClick={() => { void fetchStats() }}>
-            刷新信息
-          </Button>
-        )}
-      >
-        {!contributionEnabled ? (
-          <Alert type="info" showIcon message="贡献功能已关闭，开启后可获取服务器与 key 信息。" />
-        ) : (
-          <Space direction="vertical" style={{ width: '100%' }} size={12}>
-            {statsError ? <Alert type="error" showIcon message={statsError} /> : null}
-            <div>
-              <Typography.Text strong>服务器信息</Typography.Text>
-              <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 8 }}>
-                <Tag color="blue">账号数: {formatDisplayNumber(serverQuotaAccountCount)}</Tag>
-                <Tag color="geekblue">总额度: {formatDisplayNumber(serverQuotaTotal)}</Tag>
-                <Tag color="volcano">已用额度: {formatDisplayNumber(serverQuotaUsed)}</Tag>
-                <Tag color="green">剩余额度: {formatDisplayNumber(serverQuotaRemaining)}</Tag>
-                <Tag color="orange">已用占比: {formatDisplayPercent(serverQuotaUsedPercent)}</Tag>
-                <Tag color="cyan">剩余占比: {formatDisplayPercent(serverQuotaRemainingPercent)}</Tag>
-                <Tag color="purple">折算账号数: {formatDisplayNumber(serverQuotaRemainingAccounts, 2)}</Tag>
-              </div>
-            </div>
-            <div>
-              <Typography.Text strong>API Key</Typography.Text>
-              <Space style={{ marginLeft: 8 }}>
-                <Typography.Text copyable={keyFromStats ? { text: keyFromStats } : undefined}>
-                  {keyFromStats || '-'}
-                </Typography.Text>
-              </Space>
-            </div>
-            <div>
-              <Typography.Text strong>key 信息</Typography.Text>
-              <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 8 }}>
-                <Tag color="blue">余额: {keyBalance ?? '-'}</Tag>
-                <Tag color="geekblue">来源: {keySource}</Tag>
-                <Tag color="cyan">绑定账号数: {boundAccounts ?? '-'}</Tag>
-                <Tag color="purple">结算金额: {settlementAmount ?? '-'}</Tag>
-              </div>
-            </div>
-          </Space>
-        )}
-      </Card>
-
-      <Card title="提现">
-        <Space direction="vertical" style={{ width: '100%' }}>
-          <Typography.Text>key 当前额度：{keyBalance ?? '-'}</Typography.Text>
-          <Form.Item label="提现金额" style={{ marginBottom: 0 }}>
-            <Select
-              value={redeemAmount}
-              onChange={setRedeemAmount}
-              style={{ width: 240 }}
-              options={CONTRIBUTION_REDEEM_OPTIONS.map((amount) => ({ label: String(amount), value: amount }))}
-            />
-          </Form.Item>
-          <Button type="primary" danger onClick={() => { void doRedeem() }} loading={redeeming}>
-            提现确认
-          </Button>
-          {redeemResponse ? (
-            <Alert
-              type={redeemResponse.ok === false ? 'error' : 'success'}
-              showIcon
-              message={redeemResponse.ok === false ? `提现失败：${String(redeemResponse.error || '-')}` : redeemSuccessText}
-              description={<pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{formatResultText(redeemResponse)}</pre>}
-            />
-          ) : null}
-        </Space>
-      </Card>
-    </div>
-  )
-}
-
-function OutlookImportSection() {
-  const { message: msg } = App.useApp()
-  const [value, setValue] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [result, setResult] = useState<any | null>(null)
-
-  const handleSubmit = async () => {
-    const payload = String(value || '').trim()
-    if (!payload) {
-      msg.error('请输入 Outlook 账号内容')
-      return
-    }
-    setLoading(true)
-    try {
-      const res = await apiFetch('/outlook/batch-import', {
-        method: 'POST',
-        body: JSON.stringify({ data: payload, enabled: true }),
-      })
-      setResult(res)
-      msg.success(`导入完成：成功 ${res.success} / 失败 ${res.failed}`)
-    } catch (e: any) {
-      msg.error(e?.message || '导入失败')
-      setResult({ error: e?.message || String(e) })
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  return (
-    <Card
-      title="Outlook 批量导入"
-      extra={<span style={{ fontSize: 12, color: '#7a8ba3' }}>每行格式：邮箱----密码 或 邮箱----密码----client_id----refresh_token</span>}
-      style={{ marginBottom: 16 }}
-    >
-      <Input.TextArea
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        placeholder={`example@outlook.com----password\nexample@outlook.com----password----client_id----refresh_token`}
-        autoSize={{ minRows: 6, maxRows: 14 }}
-      />
-      <Space style={{ marginTop: 12 }}>
-        <Button type="primary" loading={loading} onClick={handleSubmit}>
-          导入
-        </Button>
-        <Button onClick={() => { setValue(''); setResult(null) }}>
-          清空
-        </Button>
-      </Space>
-      {result ? (
-        <div style={{ marginTop: 12 }}>
-          {'success' in result ? (
-            <Alert
-              type={result.failed ? 'warning' : 'success'}
-              showIcon
-              message={`导入完成：成功 ${result.success} / 失败 ${result.failed}`}
-              description={result.errors && result.errors.length ? (
-                <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{result.errors.join('\n')}</pre>
-              ) : undefined}
-            />
-          ) : (
-            <Alert type="error" showIcon message="导入失败" description={String(result.error || '')} />
-          )}
-        </div>
-      ) : null}
-    </Card>
-  )
-}
 
 type TotpSetupState = 'idle' | 'setup'
 
@@ -1777,22 +1189,16 @@ export default function Settings() {
             <SecurityPanel />
           ) : (
             <Form form={form} layout="vertical">
-              {activeTab === 'contribution' ? (
-                <ContributionPanel form={form} onSave={save} saving={saving} saved={saved} />
-              ) : (
-                <>
-                  {activeTab === 'captcha' ? <SolverStatus /> : null}
-                  {currentTab.sections.map((section) => (
-                    <ConfigSection key={section.title} section={section} />
-                  ))}
-                  {activeTab === 'mailbox' ? <AppleMailPoolImportSection form={form} /> : null}
-                  {activeTab === 'mailbox' ? <CFWorkerDomainPoolSection form={form} /> : null}
-                  {activeTab === 'mailbox' ? <OutlookImportSection /> : null}
-                  <Button type="primary" icon={<SaveOutlined />} onClick={save} loading={saving} block>
-                    {saved ? '已保存 ✓' : '保存配置'}
-                  </Button>
-                </>
-              )}
+              <>
+                {activeTab === 'captcha' ? <SolverStatus /> : null}
+                {currentTab.sections.map((section) => (
+                  <ConfigSection key={section.title} section={section} />
+                ))}
+                {activeTab === 'mailbox' ? <CFWorkerDomainPoolSection form={form} /> : null}
+                <Button type="primary" icon={<SaveOutlined />} onClick={save} loading={saving} block>
+                  {saved ? '已保存 ✓' : '保存配置'}
+                </Button>
+              </>
             </Form>
           )}
         </div>

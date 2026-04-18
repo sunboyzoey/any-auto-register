@@ -57,6 +57,13 @@ class OutlookAccountModel(SQLModel, table=True):
     password: str
     client_id: str = ""
     refresh_token: str = ""
+    mail_access_type: str = ""          # graph | imap_pop | ""
+    gpt_register_status: str = "未注册"  # 未注册 | 进行中 | 已注册
+    grok_register_status: str = "未注册" # 未注册 | 进行中 | 已注册
+    trae_register_status: str = "未注册"
+    kiro_register_status: str = "未注册"
+    obl_register_status: str = "未注册"  # OpenBlockLabs
+    cursor_register_status: str = "未注册"
     enabled: bool = True
     created_at: datetime = Field(default_factory=_utcnow)
     updated_at: datetime = Field(default_factory=_utcnow)
@@ -73,6 +80,50 @@ class ProxyModel(SQLModel, table=True):
     fail_count: int = 0
     is_active: bool = True
     last_checked: Optional[datetime] = None
+
+
+class ScheduledJobModel(SQLModel, table=True):
+    """定时注册计划"""
+    __tablename__ = "scheduled_jobs"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = ""                        # "每日注册 ChatGPT ×5"
+    platform: str = Field(index=True)     # chatgpt / grok / trae / kiro / openblocklabs
+    cron_hour: int = 9                    # 0-23 每天几点执行
+    cron_minute: int = 0                  # 0-59 分钟
+    count: int = 1                        # 每次注册数量
+    concurrency: int = 1                  # 并发数
+    mail_provider: str = "outlook"        # outlook / cfworker
+    proxy: str = ""
+    config_json: str = "{}"               # 额外配置 JSON
+    enabled: bool = True
+    last_run_at: Optional[datetime] = None
+    next_run_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
+
+
+class TaskQueueModel(SQLModel, table=True):
+    """持久化任务队列"""
+    __tablename__ = "task_queue"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    job_id: Optional[int] = None          # 关联 scheduled_jobs (手动任务为 None)
+    task_id: str = Field(index=True)      # 兼容 RegisterTaskStore 的 task_id
+    platform: str = Field(index=True)
+    source: str = "manual"                # manual / scheduled / cpa_replenish
+    status: str = "pending"               # pending → running → done / failed / interrupted
+    total: int = 1
+    success: int = 0
+    failed: int = 0
+    skipped: int = 0
+    progress: str = "0/0"
+    config_json: str = "{}"               # 注册配置快照
+    error: str = ""
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
 
 
 def save_account(account) -> 'AccountModel':
@@ -115,6 +166,35 @@ def save_account(account) -> 'AccountModel':
 
 def init_db():
     SQLModel.metadata.create_all(engine)
+    _migrate_outlook_accounts()
+
+
+def _migrate_outlook_accounts():
+    """为已有的 outlook_accounts 表补齐新增字段。"""
+    new_columns = [
+        ("mail_access_type", "VARCHAR NOT NULL DEFAULT ''"),
+        ("gpt_register_status", "VARCHAR NOT NULL DEFAULT '未注册'"),
+        ("grok_register_status", "VARCHAR NOT NULL DEFAULT '未注册'"),
+        ("trae_register_status", "VARCHAR NOT NULL DEFAULT '未注册'"),
+        ("kiro_register_status", "VARCHAR NOT NULL DEFAULT '未注册'"),
+        ("obl_register_status", "VARCHAR NOT NULL DEFAULT '未注册'"),
+        ("cursor_register_status", "VARCHAR NOT NULL DEFAULT '未注册'"),
+    ]
+    import sqlite3 as _sqlite3
+    raw_url = str(DATABASE_URL).replace("sqlite:///", "", 1)
+    try:
+        conn = _sqlite3.connect(raw_url)
+        existing = {
+            row[1].lower()
+            for row in conn.execute("PRAGMA table_info(outlook_accounts)").fetchall()
+        }
+        for col_name, col_ddl in new_columns:
+            if col_name.lower() not in existing:
+                conn.execute(f"ALTER TABLE outlook_accounts ADD COLUMN {col_name} {col_ddl}")
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
 
 
 def get_session():

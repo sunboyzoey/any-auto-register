@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Card, Table, Button, Input, Tag, Space, Popconfirm, message } from 'antd'
+import PageHeader from '@/components/PageHeader'
 import {
   PlusOutlined,
   DeleteOutlined,
@@ -131,15 +132,15 @@ export default function Proxies() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div>
-          <h1 style={{ fontSize: 24, fontWeight: 'bold', margin: 0 }}>代理管理</h1>
-          <p style={{ color: '#7a8ba3', marginTop: 4 }}>共 {proxies.length} 个代理</p>
-        </div>
-        <Button icon={<ReloadOutlined spin={checking} />} onClick={check} loading={checking}>
-          检测全部
-        </Button>
-      </div>
+      <PageHeader
+        title="代理管理"
+        subtitle={`共 ${proxies.length} 个代理`}
+        extra={
+          <Button icon={<ReloadOutlined spin={checking} />} onClick={check} loading={checking}>
+            检测全部
+          </Button>
+        }
+      />
 
       <Card title="添加代理（每行一个）">
         <Space direction="vertical" style={{ width: '100%' }}>

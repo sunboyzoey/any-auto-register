@@ -12,6 +12,7 @@ import {
   Typography,
   Descriptions,
 } from 'antd'
+import PageHeader from '@/components/PageHeader'
 import {
   PlayCircleOutlined,
   CheckCircleOutlined,
@@ -41,7 +42,7 @@ export default function RegisterTaskPage() {
       form.setFieldsValue({
         executor_type: normalizeExecutorForPlatform(currentPlatform, cfg.default_executor),
         captcha_solver: cfg.default_captcha_solver || 'yescaptcha',
-        mail_provider: cfg.mail_provider || 'luckmail',
+        mail_provider: cfg.mail_provider || 'cfworker',
         applemail_base_url: cfg.applemail_base_url || 'https://www.appleemail.top',
         applemail_pool_dir: cfg.applemail_pool_dir || 'mail',
         applemail_pool_file: cfg.applemail_pool_file || '',
@@ -149,6 +150,7 @@ export default function RegisterTaskPage() {
       cfworker_random_subdomain: values.cfworker_random_subdomain,
       cfworker_random_name_subdomain: values.cfworker_random_name_subdomain,
       cfworker_fingerprint: values.cfworker_fingerprint,
+      drission_headless: values.drission_headless ? '1' : '0',
       smstome_cookie: values.smstome_cookie,
       smstome_country_slugs: values.smstome_country_slugs,
       smstome_phone_attempts: values.smstome_phone_attempts,
@@ -209,6 +211,19 @@ export default function RegisterTaskPage() {
   const captchaSolver = Form.useWatch('captcha_solver', form)
   const platform = Form.useWatch('platform', form)
   const executorOptions = getExecutorOptions(platform)
+  const [cfworkerDomains, setCfworkerDomains] = useState<string[]>([])
+  const [cfworkerConfigured, setCfworkerConfigured] = useState(false)
+  const [outlookCount, setOutlookCount] = useState<number | null>(null)
+
+  useEffect(() => {
+    apiFetch('/config/cfworker/domains').then((data) => {
+      setCfworkerConfigured(data.configured)
+      setCfworkerDomains(data.domains || [])
+    }).catch(() => {})
+    apiFetch('/outlook/accounts/stats').then((data) => {
+      setOutlookCount(data.enabled ?? data.total ?? null)
+    }).catch(() => {})
+  }, [])
 
   useEffect(() => {
     const currentExecutor = form.getFieldValue('executor_type')
@@ -220,16 +235,16 @@ export default function RegisterTaskPage() {
 
   return (
     <div style={{ maxWidth: 800 }}>
-      <div style={{ marginBottom: 24 }}>
-        <h1 style={{ fontSize: 24, fontWeight: 'bold', margin: 0 }}>注册任务</h1>
-        <p style={{ color: '#7a8ba3', marginTop: 4 }}>创建账号自动注册任务</p>
-      </div>
+      <PageHeader
+        title="注册任务"
+        subtitle="创建账号自动注册任务"
+      />
 
       <Form form={form} layout="vertical" onFinish={submit} initialValues={{
         platform: 'trae',
         executor_type: 'protocol',
         captcha_solver: 'yescaptcha',
-        mail_provider: 'luckmail',
+        mail_provider: 'cfworker',
         applemail_base_url: 'https://www.appleemail.top',
         applemail_pool_dir: 'mail',
         applemail_mailboxes: 'INBOX,Junk',
@@ -292,228 +307,58 @@ export default function RegisterTaskPage() {
               />
             </Form.Item>
           )}
+          {platform === 'chatgpt' && mailProvider === 'cfworker' && (
+            <Form.Item name="drission_headless" valuePropName="checked" style={{ marginBottom: 0 }}>
+              <Checkbox>无头模式（不弹出浏览器窗口）</Checkbox>
+            </Form.Item>
+          )}
         </Card>
 
         <Card title="邮箱配置" style={{ marginBottom: 16 }}>
           <Form.Item name="mail_provider" label="邮箱服务" rules={[{ required: true }]}>
             <Select
               options={[
-                { value: 'luckmail', label: 'LuckMail' },
-                { value: 'applemail', label: 'AppleMail / 小苹果' },
-                { value: 'moemail', label: 'MoeMail (sall.cc)' },
-                { value: 'tempmail_lol', label: 'TempMail.lol' },
-                { value: 'skymail', label: 'SkyMail (CloudMail)' },
-                { value: 'cloudmail', label: 'CloudMail (genToken)' },
-                { value: 'maliapi', label: 'YYDS Mail / MaliAPI' },
-                { value: 'gptmail', label: 'GPTMail' },
-                { value: 'opentrashmail', label: 'OpenTrashMail' },
-                { value: 'duckmail', label: 'DuckMail' },
-                { value: 'freemail', label: 'Freemail' },
-                { value: 'laoudo', label: 'Laoudo' },
-                { value: 'cfworker', label: 'CF Worker' },
+                { value: 'cfworker', label: `CF Worker 域名邮箱${cfworkerDomains.length ? ` (${cfworkerDomains.length} 域名)` : ''}` },
+                { value: 'outlook', label: `Outlook 邮箱池${outlookCount != null ? ` (${outlookCount} 可用)` : ''}` },
               ]}
             />
           </Form.Item>
-          {mailProvider === 'skymail' && (
-            <>
-              <Form.Item name="skymail_api_base" label="API Base">
-                <Input placeholder="https://api.skymail.ink" />
-              </Form.Item>
-              <Form.Item name="skymail_token" label="Authorization Token">
-                <Input.Password placeholder="Bearer xxxxx" />
-              </Form.Item>
-              <Form.Item name="skymail_domain" label="邮箱域名">
-                <Input placeholder="mail.example.com" />
-              </Form.Item>
-            </>
-          )}
-          {mailProvider === 'cloudmail' && (
-            <>
-              <Form.Item name="cloudmail_api_base" label="API Base" rules={[{ required: true, message: '请输入 CloudMail API 地址' }]}>
-                <Input placeholder="https://cloudmail.example.com" />
-              </Form.Item>
-              <Form.Item name="cloudmail_admin_email" label="管理员邮箱（可选）" extra="留空自动使用 admin@域名">
-                <Input placeholder="admin@example.com" />
-              </Form.Item>
-              <Form.Item name="cloudmail_admin_password" label="管理员密码" rules={[{ required: true, message: '请输入 CloudMail 管理员密码' }]}>
-                <Input.Password placeholder="admin password" />
-              </Form.Item>
-              <Form.Item name="cloudmail_domain" label="邮箱域名（可选）" extra="支持单个域名，或逗号分隔多个域名">
-                <Input placeholder="mail.example.com,mail2.example.com" />
-              </Form.Item>
-              <Form.Item name="cloudmail_subdomain" label="子域名（可选）">
-                <Input placeholder="pool-a" />
-              </Form.Item>
-              <Form.Item name="cloudmail_timeout" label="请求超时秒数">
-                <InputNumber min={5} max={120} style={{ width: '100%' }} />
-              </Form.Item>
-            </>
-          )}
-          {mailProvider === 'laoudo' && (
-            <>
-              <Form.Item name="laoudo_email" label="邮箱地址">
-                <Input placeholder="xxx@laoudo.com" />
-              </Form.Item>
-              <Form.Item name="laoudo_account_id" label="Account ID">
-                <Input placeholder="563" />
-              </Form.Item>
-              <Form.Item name="laoudo_auth" label="JWT Token">
-                <Input placeholder="eyJ..." />
-              </Form.Item>
-            </>
-          )}
-          {mailProvider === 'maliapi' && (
-            <>
-              <Form.Item name="maliapi_base_url" label="API URL">
-                <Input placeholder="https://maliapi.215.im/v1" />
-              </Form.Item>
-              <Form.Item name="maliapi_api_key" label="API Key">
-                <Input.Password placeholder="AC-..." />
-              </Form.Item>
-              <Form.Item name="maliapi_domain" label="邮箱域名（可选）">
-                <Input placeholder="example.com" />
-              </Form.Item>
-              <Form.Item name="maliapi_auto_domain_strategy" label="自动域名策略">
-                <Select
-                  options={[
-                    { value: 'balanced', label: 'balanced' },
-                    { value: 'prefer_owned', label: 'prefer_owned' },
-                    { value: 'prefer_public', label: 'prefer_public' },
-                  ]}
-                />
-              </Form.Item>
-            </>
-          )}
-          {mailProvider === 'applemail' && (
-            <>
-              <Form.Item name="applemail_base_url" label="API URL">
-                <Input placeholder="https://www.appleemail.top" />
-              </Form.Item>
-              <Form.Item
-                name="applemail_pool_dir"
-                label="邮箱池目录"
-                extra="默认读取项目根目录下的 mail 目录。"
-              >
-                <Input placeholder="mail" />
-              </Form.Item>
-              <Form.Item
-                name="applemail_pool_file"
-                label="邮箱池文件（可选）"
-                extra="留空会自动使用目录中最新的 .json/.txt 文件；JSON 内容导入请到全局配置页操作。"
-              >
-                <Input placeholder="applemail_20260403.json" />
-              </Form.Item>
-              <Form.Item name="applemail_mailboxes" label="轮询文件夹">
-                <Input placeholder="INBOX,Junk" />
-              </Form.Item>
-            </>
-          )}
-          {mailProvider === 'gptmail' && (
-            <>
-              <Form.Item name="gptmail_base_url" label="API URL">
-                <Input placeholder="https://mail.chatgpt.org.uk" />
-              </Form.Item>
-              <Form.Item name="gptmail_api_key" label="API Key">
-                <Input.Password placeholder="gpt-test" />
-              </Form.Item>
-              <Form.Item
-                name="gptmail_domain"
-                label="邮箱域名（可选）"
-                extra="已知当前可用域名时可直接本地拼装随机地址，省掉一次 generate-email 请求"
-              >
-                <Input placeholder="example.com" />
-              </Form.Item>
-            </>
-          )}
-          {mailProvider === 'opentrashmail' && (
-            <>
-              <Form.Item name="opentrashmail_api_url" label="API URL" rules={[{ required: true, message: '请输入 OpenTrashMail 地址' }]}>
-                <Input placeholder="http://mail.example.com:8085" />
-              </Form.Item>
-              <Form.Item
-                name="opentrashmail_domain"
-                label="邮箱域名（可选）"
-                extra="已知 OpenTrashMail 当前启用域名时可直接本地拼装随机地址；留空则调用 /api/random 自动获取"
-              >
-                <Input placeholder="xiyoufm.com" />
-              </Form.Item>
-              <Form.Item
-                name="opentrashmail_password"
-                label="站点密码（可选）"
-                extra="当 OpenTrashMail 开启 PASSWORD 保护时填写，会自动追加到 JSON API 查询参数"
-              >
-                <Input.Password placeholder="留空表示未启用" />
-              </Form.Item>
-            </>
+          {mailProvider === 'outlook' && (
+            <Text type="secondary" style={{ display: 'block', marginBottom: 12, fontSize: 13 }}>
+              将从 Outlook 邮箱池中自动取出账号用于注册（用后即删）。
+              {outlookCount != null && outlookCount === 0 && (
+                <span style={{ color: '#ef4444', marginLeft: 8 }}>⚠ 邮箱池为空，请先在「Outlook 邮箱」页面导入账号。</span>
+              )}
+            </Text>
           )}
           {mailProvider === 'cfworker' && (
             <>
-              <Form.Item name="cfworker_api_url" label="API URL">
-                <Input placeholder="https://apimail.example.com" />
-              </Form.Item>
-              <Form.Item name="cfworker_admin_token" label="Admin Token">
-                <Input placeholder="abc123,,,abc" />
-              </Form.Item>
-              <Form.Item name="cfworker_custom_auth" label="Site Password">
-                <Input.Password placeholder="private site password" />
-              </Form.Item>
+              {!cfworkerConfigured && (
+                <Text type="danger" style={{ display: 'block', marginBottom: 12, fontSize: 13 }}>
+                  ⚠ CF Worker 尚未配置，请先在「全局配置 → 邮箱」中设置 API URL 和 Admin Token。
+                </Text>
+              )}
               <Form.Item
                 name="cfworker_domain_override"
-                label="单次任务指定域名（可选）"
-                extra="留空时将从设置页已启用的域名列表中随机选择。"
+                label="选择域名后缀"
+                extra="留空将从全局已启用域名中随机选择。可在「全局配置 → 邮箱」中管理域名池。"
               >
-                <Input placeholder="example.com" />
+                <Select
+                  allowClear
+                  placeholder="随机选择已启用域名"
+                  options={cfworkerDomains.map(d => ({ value: d, label: d }))}
+                  notFoundContent="暂无可用域名，请在全局配置中添加"
+                />
               </Form.Item>
               <Form.Item
                 name="cfworker_subdomain"
                 label="子域名（可选）"
-                extra="填写后将生成 xxx@子域名.根域名；若启用随机子域名，则会生成 xxx@随机值.子域名.根域名。"
+                extra="填写后邮箱格式为 xxx@子域名.根域名"
               >
                 <Input placeholder="mail / pool-a" />
               </Form.Item>
               <Form.Item name="cfworker_random_subdomain" valuePropName="checked">
                 <Checkbox>每次注册前随机生成一层子域名</Checkbox>
-              </Form.Item>
-              <Form.Item name="cfworker_random_name_subdomain" valuePropName="checked">
-                <Checkbox>使用随机姓名作为子域名</Checkbox>
-              </Form.Item>
-              <Form.Item name="cfworker_fingerprint" label="Fingerprint (可选)">
-                <Input placeholder="cfb82279f..." />
-              </Form.Item>
-            </>
-          )}
-          {mailProvider === 'freemail' && (
-            <>
-              <Form.Item name="freemail_api_url" label="API URL" rules={[{ required: true, message: '请输入 Freemail API 地址' }]}>
-                <Input placeholder="https://mail.example.com" />
-              </Form.Item>
-              <Form.Item name="freemail_admin_token" label="管理员令牌（可选）">
-                <Input.Password placeholder="JWT_TOKEN" />
-              </Form.Item>
-              <Form.Item name="freemail_username" label="用户名（可选）">
-                <Input placeholder="admin" />
-              </Form.Item>
-              <Form.Item name="freemail_password" label="密码（可选）">
-                <Input.Password placeholder="password" />
-              </Form.Item>
-              <Form.Item name="freemail_domain" label="邮箱域名（可选）" extra="填写后会优先使用该域名生成邮箱">
-                <Input placeholder="example.com" />
-              </Form.Item>
-            </>
-          )}
-          {mailProvider === 'luckmail' && (
-            <>
-              <Form.Item name="luckmail_base_url" label="平台地址">
-                <Input placeholder="https://mails.luckyous.com" />
-              </Form.Item>
-              <Form.Item name="luckmail_api_key" label="API Key">
-                <Input.Password placeholder="ak_..." />
-              </Form.Item>
-              <Form.Item name="luckmail_email_type" label="邮箱类型（可选）">
-                <Input placeholder="ms_graph / ms_imap" />
-              </Form.Item>
-              <Form.Item name="luckmail_domain" label="邮箱域名（可选）">
-                <Input placeholder="outlook.com" />
               </Form.Item>
             </>
           )}

@@ -19,6 +19,7 @@ from api.integrations import router as integrations_router
 from api.auth import router as auth_router
 from api.outlook import router as outlook_router
 from api.contribution import router as contribution_router
+from api.scheduled import router as scheduled_router
 
 EXPECTED_CONDA_ENV = os.getenv("APP_CONDA_ENV", "any-auto-register")
 
@@ -66,6 +67,12 @@ async def lifespan(app: FastAPI):
     scheduler.start()
     from services.solver_manager import start_async
     start_async()
+    # 恢复中断的 Outlook 预留邮箱
+    try:
+        from core.base_mailbox import OutlookMailbox
+        OutlookMailbox.restore_all_reserved()
+    except Exception:
+        pass
     yield
     from core.scheduler import scheduler as _scheduler
     _scheduler.stop()
@@ -112,6 +119,7 @@ app.include_router(integrations_router, prefix="/api")
 app.include_router(auth_router, prefix="/api")
 app.include_router(outlook_router, prefix="/api")
 app.include_router(contribution_router, prefix="/api")
+app.include_router(scheduled_router, prefix="/api")
 
 
 @app.get("/api/solver/status")

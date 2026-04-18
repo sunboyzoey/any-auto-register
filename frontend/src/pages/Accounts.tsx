@@ -503,6 +503,8 @@ export default function Accounts() {
   const [detailForm] = Form.useForm()
   const { mode: chatgptRegistrationMode, setMode: setChatgptRegistrationMode } =
     usePersistentChatGPTRegistrationMode()
+  const [cfworkerDomains, setCfworkerDomains] = useState<string[]>([])
+  const [outlookCount, setOutlookCount] = useState<number | null>(null)
   const [importText, setImportText] = useState('')
   const [importLoading, setImportLoading] = useState(false)
   const [taskId, setTaskId] = useState<string | null>(null)
@@ -539,6 +541,11 @@ export default function Accounts() {
   useEffect(() => {
     load()
   }, [load])
+
+  useEffect(() => {
+    apiFetch('/config/cfworker/domains').then(d => setCfworkerDomains(d.domains || [])).catch(() => {})
+    apiFetch('/outlook/accounts/stats').then(d => setOutlookCount(d.enabled ?? d.total ?? null)).catch(() => {})
+  }, [])
 
   useEffect(() => {
     apiFetch(`/actions/${currentPlatform}`)
@@ -627,62 +634,29 @@ export default function Accounts() {
     try {
       const cfg = await apiFetch('/config')
       const executorType = normalizeExecutorForPlatform(currentPlatform, cfg.default_executor)
+      const selectedProvider = values.mail_provider || cfg.mail_provider || 'cfworker'
       const registerExtra = {
-        mail_provider: cfg.mail_provider || 'luckmail',
-        applemail_base_url: cfg.applemail_base_url,
-        applemail_pool_dir: cfg.applemail_pool_dir,
-        applemail_pool_file: cfg.applemail_pool_file,
-        applemail_mailboxes: cfg.applemail_mailboxes,
-        laoudo_auth: cfg.laoudo_auth,
-        laoudo_email: cfg.laoudo_email,
-        laoudo_account_id: cfg.laoudo_account_id,
-        gptmail_base_url: cfg.gptmail_base_url,
-        gptmail_api_key: cfg.gptmail_api_key,
-        gptmail_domain: cfg.gptmail_domain,
-        maliapi_base_url: cfg.maliapi_base_url,
-        maliapi_api_key: cfg.maliapi_api_key,
-        maliapi_domain: cfg.maliapi_domain,
-        maliapi_auto_domain_strategy: cfg.maliapi_auto_domain_strategy,
-        yescaptcha_key: cfg.yescaptcha_key,
-        moemail_api_url: cfg.moemail_api_url,
-        moemail_api_key: cfg.moemail_api_key,
-        skymail_api_base: cfg.skymail_api_base,
-        skymail_token: cfg.skymail_token,
-        skymail_domain: cfg.skymail_domain,
-        cloudmail_api_base: cfg.cloudmail_api_base,
-        cloudmail_admin_email: cfg.cloudmail_admin_email,
-        cloudmail_admin_password: cfg.cloudmail_admin_password,
-        cloudmail_domain: cfg.cloudmail_domain,
-        cloudmail_subdomain: cfg.cloudmail_subdomain,
-        cloudmail_timeout: cfg.cloudmail_timeout,
-        duckmail_address: cfg.duckmail_address,
-        duckmail_password: cfg.duckmail_password,
-        duckmail_api_url: cfg.duckmail_api_url,
-        duckmail_provider_url: cfg.duckmail_provider_url,
-        duckmail_bearer: cfg.duckmail_bearer,
-        freemail_api_url: cfg.freemail_api_url,
-        freemail_admin_token: cfg.freemail_admin_token,
-        freemail_username: cfg.freemail_username,
-        freemail_password: cfg.freemail_password,
-        freemail_domain: cfg.freemail_domain,
+        mail_provider: selectedProvider,
         cfworker_api_url: cfg.cfworker_api_url,
         cfworker_admin_token: cfg.cfworker_admin_token,
         cfworker_custom_auth: cfg.cfworker_custom_auth,
         cfworker_domain: cfg.cfworker_domain,
+        cfworker_domain_override: values.cfworker_domain_override || '',
         cfworker_subdomain: cfg.cfworker_subdomain,
         cfworker_random_subdomain: parseBooleanConfigValue(cfg.cfworker_random_subdomain),
         cfworker_random_name_subdomain: parseBooleanConfigValue(cfg.cfworker_random_name_subdomain),
         cfworker_fingerprint: cfg.cfworker_fingerprint,
+        yescaptcha_key: cfg.yescaptcha_key,
+        luckmail_base_url: cfg.luckmail_base_url,
+        luckmail_api_key: cfg.luckmail_api_key,
+        luckmail_email_type: cfg.luckmail_email_type,
+        luckmail_domain: cfg.luckmail_domain,
         smstome_cookie: cfg.smstome_cookie,
         smstome_country_slugs: cfg.smstome_country_slugs,
         smstome_phone_attempts: cfg.smstome_phone_attempts,
         smstome_otp_timeout_seconds: cfg.smstome_otp_timeout_seconds,
         smstome_poll_interval_seconds: cfg.smstome_poll_interval_seconds,
         smstome_sync_max_pages_per_country: cfg.smstome_sync_max_pages_per_country,
-        luckmail_base_url: cfg.luckmail_base_url,
-        luckmail_api_key: cfg.luckmail_api_key,
-        luckmail_email_type: cfg.luckmail_email_type,
-        luckmail_domain: cfg.luckmail_domain,
       }
       const chatgptRegistrationRequestAdapter =
         buildChatGPTRegistrationRequestAdapter(
@@ -1057,7 +1031,7 @@ export default function Accounts() {
         render: (text: string) => text || '-',
       },
       {
-        title: '试用链接',
+        title: '支付链接',
         dataIndex: 'cashier_url',
         key: 'cashier_url',
         width: 120,
@@ -1065,13 +1039,36 @@ export default function Accounts() {
           url ? (
             <Space size={0}>
               <Button type="text" size="small" icon={<CopyOutlined />} onClick={() => copyText(url)} />
-              <Button type="text" size="small" icon={<LinkOutlined />} onClick={() => window.open(url, '_blank')} />
+              <Button type="link" size="small" icon={<LinkOutlined />} onClick={() => window.open(url, '_blank')}>打开</Button>
             </Space>
           ) : (
             '-'
           ),
       },
     )
+  }
+
+  if (isChatgptPlatform) {
+    columns.push({
+      title: 'Cookie 文件',
+      key: 'cookie_file',
+      width: 120,
+      render: (_: any, record: any) => {
+        const cookieFile = record.extra?.cookie_file
+        return cookieFile ? (
+          <Button
+            type="link"
+            size="small"
+            icon={<CopyOutlined />}
+            onClick={() => copyText(cookieFile)}
+          >
+            复制
+          </Button>
+        ) : (
+          <Text type="secondary">-</Text>
+        )
+      },
+    })
   }
 
   columns.push(
@@ -1221,7 +1218,7 @@ export default function Accounts() {
           onChange: setSelectedRowKeys,
         }}
         pagination={{ pageSize: 20, showSizeChanger: false }}
-        scroll={{ x: isChatgptPlatform ? 1440 : 980 }}
+        scroll={{ x: isChatgptPlatform ? 1560 : 980 }}
         onRow={(record) => ({
           onDoubleClick: () => {
             setCurrentAccount(record)
@@ -1240,6 +1237,30 @@ export default function Accounts() {
       >
         {!taskId ? (
           <Form form={registerForm} layout="vertical" onFinish={handleRegister}>
+            <Form.Item name="mail_provider" label="邮箱来源" initialValue="cfworker" rules={[{ required: true }]}>
+              <Select
+                options={[
+                  { value: 'cfworker', label: `CF Worker 域名邮箱${cfworkerDomains.length ? ` (${cfworkerDomains.length} 域名)` : ''}` },
+                  { value: 'outlook', label: `Outlook 邮箱池${outlookCount != null ? ` (${outlookCount} 可用)` : ''}` },
+                ]}
+              />
+            </Form.Item>
+            <Form.Item noStyle shouldUpdate={(prev, cur) => prev.mail_provider !== cur.mail_provider}>
+              {() => {
+                const provider = registerForm.getFieldValue('mail_provider')
+                if (provider === 'cfworker' && cfworkerDomains.length > 0) {
+                  return (
+                    <Form.Item name="cfworker_domain_override" label="选择域名后缀" extra="留空将随机选择已启用域名">
+                      <Select allowClear placeholder="随机选择" options={cfworkerDomains.map(d => ({ value: d, label: d }))} />
+                    </Form.Item>
+                  )
+                }
+                if (provider === 'outlook' && outlookCount === 0) {
+                  return <Alert type="warning" message="Outlook 邮箱池为空，请先在「Outlook 邮箱」页面导入" showIcon style={{ marginBottom: 16 }} />
+                }
+                return null
+              }}
+            </Form.Item>
             <Form.Item name="count" label="注册数量" initialValue={1} rules={[{ required: true }]}>
               <Input type="number" min={1} />
             </Form.Item>

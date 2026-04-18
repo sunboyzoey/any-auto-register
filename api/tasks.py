@@ -1,7 +1,7 @@
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from sqlmodel import Session, select
+from sqlmodel import Session, select, col
 from typing import Optional
 from copy import deepcopy
 from core.db import TaskLog, engine
@@ -157,6 +157,69 @@ def _auto_upload_integrations(task_id: str, account):
         _log(task_id, f"  [Auto Upload] 自动导入异常: {e}")
 
 
+_PLATFORM_STATUS_FIELD_MAP = {
+    "chatgpt": "gpt_register_status",
+    "grok": "grok_register_status",
+    "trae": "trae_register_status",
+    "kiro": "kiro_register_status",
+    "openblocklabs": "obl_register_status",
+    "cursor": "cursor_register_status",
+}
+
+
+def _update_outlook_register_status(email: str, platform: str, status: str):
+    """注册成功后回写 Outlook 邮箱的对应平台注册状态。"""
+    field = _PLATFORM_STATUS_FIELD_MAP.get(platform)
+    if not field:
+        return
+    try:
+        from core.db import engine, OutlookAccountModel
+        from datetime import datetime, timezone
+
+        with Session(engine) as session:
+            # 查找该邮箱（可能已被 _pop_account 删除，也可能还在池里）
+            existing = session.exec(
+                select(OutlookAccountModel).where(OutlookAccountModel.email == email)
+            ).first()
+            if existing:
+                setattr(existing, field, status)
+                existing.updated_at = datetime.now(timezone.utc)
+                session.add(existing)
+                session.commit()
+    except Exception:
+        pass
+
+
+def _return_outlook_if_needed(mailbox, email: str):
+    """注册失败时归还 Outlook 预留邮箱（最近一个禁用的邮箱）"""
+    try:
+        from core.db import engine, OutlookAccountModel
+        from datetime import datetime, timezone
+        with Session(engine) as session:
+            # 优先按邮箱地址精确匹配
+            acc = None
+            if email:
+                acc = session.exec(
+                    select(OutlookAccountModel)
+                    .where(OutlookAccountModel.email == email)
+                    .where(OutlookAccountModel.enabled == False)
+                ).first()
+            # 兜底：归还最近被禁用的一个
+            if not acc:
+                acc = session.exec(
+                    select(OutlookAccountModel)
+                    .where(OutlookAccountModel.enabled == False)
+                    .order_by(col(OutlookAccountModel.updated_at).desc())
+                ).first()
+            if acc:
+                acc.enabled = True
+                acc.updated_at = datetime.now(timezone.utc)
+                session.add(acc)
+                session.commit()
+    except Exception:
+        pass
+
+
 def _run_register(task_id: str, req: RegisterTaskRequest):
     from core.registry import get
     from core.base_platform import RegisterConfig
@@ -204,6 +267,7 @@ def _run_register(task_id: str, req: RegisterTaskRequest):
             nonlocal next_start_time
             proxy_pool = None
             _proxy = None
+            _mailbox = None
             current_email = req.email or ""
             attempt_id: int | None = None
             try:
@@ -213,6 +277,9 @@ def _run_register(task_id: str, req: RegisterTaskRequest):
                 attempt_id = control.start_attempt()
                 control.checkpoint(attempt_id=attempt_id)
                 _proxy = req.proxy
+                if not _proxy:
+                    from core.config_store import config_store as _cs
+                    _proxy = _cs.get("default_proxy", "") or "http://127.0.0.1:7890"
                 if not _proxy:
                     _proxy = proxy_pool.get_next()
                 _proxy = normalize_proxy_url(_proxy)
@@ -257,11 +324,16 @@ def _run_register(task_id: str, req: RegisterTaskRequest):
                 _log(task_id, f"开始注册第 {i + 1}/{req.count} 个账号")
                 if _proxy:
                     _log(task_id, f"使用代理: {_proxy}")
+                # 尝试提前获取邮箱地址（用于失败归还）
+                _pre_email = getattr(getattr(_mailbox, '_last_email', None), 'email', '') or ''
                 account = _platform.register(
                     email=req.email or None,
                     password=req.password,
                 )
                 current_email = account.email or current_email
+                # 更新 _pre_email
+                if not _pre_email:
+                    _pre_email = current_email
                 if isinstance(account.extra, dict):
                     mail_provider = merged_extra.get("mail_provider", "")
                     if mail_provider:
@@ -294,6 +366,7 @@ def _run_register(task_id: str, req: RegisterTaskRequest):
                     proxy_pool.report_success(_proxy)
                 _log(task_id, f"[OK] 注册成功: {account.email}")
                 _save_task_log(req.platform, account.email, "success")
+                _update_outlook_register_status(account.email, req.platform, "已注册")
                 _auto_upload_integrations(task_id, saved_account or account)
                 cashier_url = (account.extra or {}).get("cashier_url", "")
                 if cashier_url:
@@ -316,6 +389,8 @@ def _run_register(task_id: str, req: RegisterTaskRequest):
                 if _proxy and proxy_pool is not None:
                     proxy_pool.report_fail(_proxy)
                 _log(task_id, f"[FAIL] 注册失败: {e}")
+                # 归还 Outlook 预留邮箱
+                _return_outlook_if_needed(_mailbox, current_email)
                 _save_task_log(
                     req.platform,
                     current_email,
