@@ -86,16 +86,12 @@ CONFIG_KEYS = [
     "codex_proxy_key",
     "codex_proxy_upload_type",
     "cliproxyapi_base_url",
-    "cliproxyapi_management_key",
     "grok2api_url",
     "grok2api_app_key",
     "grok2api_pool",
     "grok2api_quota",
     "kiro_manager_path",
     "kiro_manager_exe",
-    "contribution_enabled",
-    "contribution_server_url",
-    "contribution_key",
 ]
 
 
@@ -125,8 +121,6 @@ def get_config():
         all_cfg["gptmail_base_url"] = "https://mail.chatgpt.org.uk"
     if not all_cfg.get("luckmail_base_url"):
         all_cfg["luckmail_base_url"] = "https://mails.luckyous.com/"
-    if not all_cfg.get("contribution_server_url"):
-        all_cfg["contribution_server_url"] = "http://new.xem8k5.top:7317/"
     # 只返回已知 key，未设置的返回空字符串
     return {k: all_cfg.get(k, "") for k in CONFIG_KEYS}
 

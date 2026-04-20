@@ -18,7 +18,6 @@ from api.actions import router as actions_router
 from api.integrations import router as integrations_router
 from api.auth import router as auth_router
 from api.outlook import router as outlook_router
-from api.contribution import router as contribution_router
 from api.scheduled import router as scheduled_router
 
 EXPECTED_CONDA_ENV = os.getenv("APP_CONDA_ENV", "any-auto-register")
@@ -118,7 +117,6 @@ app.include_router(actions_router, prefix="/api")
 app.include_router(integrations_router, prefix="/api")
 app.include_router(auth_router, prefix="/api")
 app.include_router(outlook_router, prefix="/api")
-app.include_router(contribution_router, prefix="/api")
 app.include_router(scheduled_router, prefix="/api")
 
 
@@ -142,7 +140,10 @@ if os.path.isdir(_static_dir):
 
     @app.get("/{full_path:path}", include_in_schema=False)
     def spa_fallback(full_path: str):
-        return FileResponse(os.path.join(_static_dir, "index.html"))
+        return FileResponse(
+            os.path.join(_static_dir, "index.html"),
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+        )
 
 
 if __name__ == "__main__":

@@ -1101,9 +1101,6 @@ export default function Settings() {
       if (!data.luckmail_base_url) {
         data.luckmail_base_url = 'https://mails.luckyous.com/'
       }
-      if (!data.contribution_server_url) {
-        data.contribution_server_url = 'http://new.xem8k5.top:7317/'
-      }
       if (!data.cloudmail_timeout) {
         data.cloudmail_timeout = 30
       }
@@ -1111,7 +1108,6 @@ export default function Settings() {
       data.cfworker_enabled_domains = parseStoredDomainList(data.cfworker_enabled_domains)
       data.cfworker_random_subdomain = parseBooleanConfigValue(data.cfworker_random_subdomain)
       data.cfworker_random_name_subdomain = parseBooleanConfigValue(data.cfworker_random_name_subdomain)
-      data.contribution_enabled = parseBooleanConfigValue(data.contribution_enabled)
       form.setFieldsValue(data)
     })
   }, [form])
@@ -1136,7 +1132,6 @@ export default function Settings() {
       }
       values.cfworker_random_subdomain = parseBooleanConfigValue(values.cfworker_random_subdomain)
       values.cfworker_random_name_subdomain = parseBooleanConfigValue(values.cfworker_random_name_subdomain)
-      values.contribution_enabled = parseBooleanConfigValue(values.contribution_enabled)
 
       await apiFetch('/config', { method: 'PUT', body: JSON.stringify({ data: values }) })
       form.setFieldsValue({
@@ -1145,7 +1140,6 @@ export default function Settings() {
         cfworker_domain: domains.length > 0 ? '' : values.cfworker_domain,
         cfworker_random_subdomain: values.cfworker_random_subdomain,
         cfworker_random_name_subdomain: values.cfworker_random_name_subdomain,
-        contribution_enabled: values.contribution_enabled,
       })
       message.success('保存成功')
       setSaved(true)

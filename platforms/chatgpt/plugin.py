@@ -169,8 +169,76 @@ class ChatGPTPlatform(BasePlatform):
             },
         )
 
+    def _action_refresh_oauth(self, account: Account, extra: dict, proxy: str) -> dict:
+        """从 Cookie 文件刷新 OAuth，生成 OAuth JSON"""
+        import os
+        from platforms.chatgpt.cookie_to_oauth import process_cookie_file
+
+        cookie_file = extra.get("cookie_file", "")
+        session_token = extra.get("session_token", "")
+        cookies_json = extra.get("cookies", "")
+
+        # 优先用 cookie_file，否则从 extra 中的 session_token/cookies 临时构造
+        temp_cookie_path = ""
+        if cookie_file and os.path.isfile(cookie_file):
+            use_cookie_path = cookie_file
+        elif session_token or cookies_json:
+            # 临时写一个 cookie 文件
+            import tempfile
+            cookie_data = {"email": account.email, "cookies": {}}
+            if cookies_json:
+                try:
+                    cookie_data["cookies"] = json.loads(cookies_json) if isinstance(cookies_json, str) else cookies_json
+                except Exception:
+                    pass
+            if session_token and "__Secure-next-auth.session-token" not in cookie_data["cookies"]:
+                cookie_data["cookies"]["__Secure-next-auth.session-token"] = session_token
+            fd, temp_cookie_path = tempfile.mkstemp(suffix=".json", prefix="oauth_tmp_")
+            with os.fdopen(fd, "w") as f:
+                json.dump(cookie_data, f)
+            use_cookie_path = temp_cookie_path
+        else:
+            return {"ok": False, "error": "缺少 Cookie 文件或 Session Token，无法刷新 OAuth"}
+
+        try:
+            output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "oauth_out")
+            result = process_cookie_file(
+                cookie_path=use_cookie_path,
+                output_dir=output_dir,
+                proxy=proxy,
+                email_hint=account.email,
+            )
+
+            if not result.get("success"):
+                return {"ok": False, "error": result.get("error", "OAuth 刷新失败")}
+
+            return {
+                "ok": True,
+                "data": {
+                    "message": f"OAuth 刷新成功，文件: {result['file_path']}",
+                    "file_path": result["file_path"],
+                    "account_id": result.get("account_id", ""),
+                    "expired": result.get("expired", ""),
+                    "plan_type": result.get("resolved_plan_type", ""),
+                },
+                "account_extra_patch": {
+                    "oauth_file": result["file_path"],
+                    "chatgpt_account_id": result.get("account_id", ""),
+                    "chatgpt_plan_type": result.get("resolved_plan_type", ""),
+                },
+            }
+        except Exception as e:
+            return {"ok": False, "error": f"OAuth 刷新异常: {e}"}
+        finally:
+            if temp_cookie_path and os.path.isfile(temp_cookie_path):
+                try:
+                    os.unlink(temp_cookie_path)
+                except Exception:
+                    pass
+
     def get_platform_actions(self) -> list:
         return [
+            {"id": "refresh_oauth", "label": "刷新 OAuth", "params": []},
             {"id": "probe_local_status", "label": "探测本地状态", "params": []},
             {"id": "sync_cliproxyapi_status", "label": "同步 CLIProxyAPI 状态", "params": []},
             {"id": "refresh_token", "label": "刷新 Token", "params": []},
@@ -218,6 +286,9 @@ class ChatGPTPlatform(BasePlatform):
 
     def execute_action(self, action_id: str, account: Account, params: dict) -> dict:
         proxy = self.config.proxy if self.config else None
+        if not proxy:
+            from core.config_store import config_store
+            proxy = config_store.get("default_proxy", "") or "http://127.0.0.1:7890"
         extra = account.extra or {}
 
         class _A:
@@ -232,6 +303,9 @@ class ChatGPTPlatform(BasePlatform):
         a.client_id = extra.get("client_id", "app_EMoamEEZ73f0CkXaXp7hrann")
         a.cookies = extra.get("cookies", "")
         a.user_id = account.user_id
+
+        if action_id == "refresh_oauth":
+            return self._action_refresh_oauth(account, extra, proxy)
 
         if action_id == "probe_local_status":
             from platforms.chatgpt.status_probe import probe_local_chatgpt_status

@@ -118,6 +118,11 @@ class GrokPlatform(BasePlatform):
         ]
 
     def execute_action(self, action_id: str, account: Account, params: dict) -> dict:
+        proxy = self.config.proxy if self.config else None
+        if not proxy:
+            from core.config_store import config_store
+            proxy = config_store.get("default_proxy", "") or "http://127.0.0.1:7890"
+
         if action_id == "upload_grok2api":
             from platforms.grok.grok2api_upload import upload_to_grok2api
 
@@ -126,7 +131,6 @@ class GrokPlatform(BasePlatform):
 
         if action_id == "payment_link":
             from platforms.grok.protocol import GrokProtocolRegister
-            from core.config_store import config_store
 
             extra = account.extra or {}
             sso = extra.get("sso", "")
@@ -135,7 +139,7 @@ class GrokPlatform(BasePlatform):
                 return {"ok": False, "error": "缺少 SSO cookie，无法获取支付链接"}
 
             reg = GrokProtocolRegister(
-                proxy=self.config.proxy if self.config else None,
+                proxy=proxy,
                 log_fn=getattr(self, "_log_fn", print),
             )
             url = reg.get_payment_link(account.email, sso, sso_rw)

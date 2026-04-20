@@ -1052,7 +1052,7 @@ export default function Accounts() {
     columns.push({
       title: 'Cookie 文件',
       key: 'cookie_file',
-      width: 120,
+      width: 100,
       render: (_: any, record: any) => {
         const cookieFile = record.extra?.cookie_file
         return cookieFile ? (
@@ -1061,6 +1061,26 @@ export default function Accounts() {
             size="small"
             icon={<CopyOutlined />}
             onClick={() => copyText(cookieFile)}
+          >
+            复制
+          </Button>
+        ) : (
+          <Text type="secondary">-</Text>
+        )
+      },
+    })
+    columns.push({
+      title: 'OAuth 文件',
+      key: 'oauth_file',
+      width: 100,
+      render: (_: any, record: any) => {
+        const oauthFile = record.extra?.oauth_file
+        return oauthFile ? (
+          <Button
+            type="link"
+            size="small"
+            icon={<CopyOutlined />}
+            onClick={() => copyText(oauthFile)}
           >
             复制
           </Button>
@@ -1218,7 +1238,7 @@ export default function Accounts() {
           onChange: setSelectedRowKeys,
         }}
         pagination={{ pageSize: 20, showSizeChanger: false }}
-        scroll={{ x: isChatgptPlatform ? 1560 : 980 }}
+        scroll={{ x: isChatgptPlatform ? 1660 : 980 }}
         onRow={(record) => ({
           onDoubleClick: () => {
             setCurrentAccount(record)

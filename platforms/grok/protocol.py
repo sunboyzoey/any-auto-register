@@ -32,7 +32,7 @@ GRPC_SERVICE = "auth_mgmt.AuthManagement"
 TURNSTILE_SITEKEY = "0x4AAAAAAAhr9JGVDZbrZOo0"
 TURNSTILE_WEBSITE_URL = f"{ACCOUNTS_BASE}/sign-up?redirect=grok-com"
 
-_BROWSERS = ["chrome131", "chrome133", "chrome136"]
+_BROWSERS = ["chrome131", "chrome133a", "chrome136"]
 
 COMMON_HEADERS = {
     "accept-language": "en-US,en;q=0.9",
@@ -610,7 +610,11 @@ class GrokProtocolRegister:
         # Step 2: 发送验证码
         self._send_email_code(email)
 
-        # Step 3: 等待验证码
+        # Step 3: 解决 Turnstile（耗时较长，与等待验证码并行）
+        _delay(0.2, 0.5)
+        turnstile_token = self._solve_turnstile()
+
+        # Step 4: 等待验证码
         if not otp_callback:
             raise RuntimeError("需要 otp_callback 获取验证码")
         code = otp_callback() or ""
@@ -618,15 +622,11 @@ class GrokProtocolRegister:
             raise RuntimeError("未获取到验证码")
         code = code.strip().replace("-", "").upper()
 
-        # Step 4: 验证邮箱
+        # Step 5: 验证邮箱（紧接着提交，减少过期风险）
         _delay(0.2, 0.5)
         self._verify_email_code(email, code)
 
-        # Step 5: 解决 Turnstile
-        _delay(0.2, 0.5)
-        turnstile_token = self._solve_turnstile()
-
-        # Step 6: 提交注册
+        # Step 6: 提交注册（验证码刚验证完，立即提交）
         _delay(0.3, 0.8)
         result = self._submit_registration(
             email, password, given_name, family_name,

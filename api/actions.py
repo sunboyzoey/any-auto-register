@@ -72,6 +72,10 @@ def _apply_action_result(
         extra = acc_model.get_extra()
         _merge_extra_patch(extra, result["account_extra_patch"])
         acc_model.set_extra(extra)
+        # 同步 cashier_url 到顶层字段
+        patch_cashier = str(result["account_extra_patch"].get("cashier_url") or "").strip()
+        if patch_cashier:
+            acc_model.cashier_url = patch_cashier
         from datetime import datetime, timezone
         acc_model.updated_at = datetime.now(timezone.utc)
         session.add(acc_model)

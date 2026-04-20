@@ -1,4 +1,9 @@
-"""CPA 凭证维护：清理异常凭证并在低于阈值时自动补注册。"""
+"""CPA 号池维护：CLIProxyAPI 实时删坏号，本模块只负责数数量 + 补注册。
+
+架构分工：
+  CLIProxyAPI（实时）：检测到 401/403(banned)/429(free) → 自动删除 auth
+  本模块（定时）：每 N 分钟查一次号池数量 → 不足 threshold 就注册补满
+"""
 
 from __future__ import annotations
 
@@ -8,9 +13,9 @@ from typing import Any
 import requests
 
 
-DEFAULT_INTERVAL_MINUTES = 60
-DEFAULT_THRESHOLD = 5
-DEFAULT_CONCURRENCY = 1
+DEFAULT_INTERVAL_MINUTES = 5
+DEFAULT_THRESHOLD = 1000
+DEFAULT_CONCURRENCY = 3
 DEFAULT_REGISTER_DELAY_SECONDS = 0.0
 AUTO_REGISTER_SOURCE = "cpa_replenish"
 
@@ -143,21 +148,14 @@ def delete_auth_files(names: list[str], *, api_url: str | None = None, api_key: 
     )
 
 
-def _count_remaining(files: list[dict[str, Any]]) -> int:
+def _count_healthy(files: list[dict[str, Any]]) -> int:
+    """统计健康的凭证数量（CLIProxyAPI 已自动删坏号，剩下非 disabled 的都是好的）"""
     return sum(
         1
         for item in files
-        if str(item.get("name", "")).strip() and str(item.get("status", "")).strip().lower() != "error"
-    )
-
-
-def _error_names(files: list[dict[str, Any]]) -> list[str]:
-    return sorted(
-        {
-            str(item.get("name", "")).strip()
-            for item in files
-            if str(item.get("status", "")).strip().lower() == "error" and str(item.get("name", "")).strip()
-        }
+        if str(item.get("name", "")).strip()
+        and not item.get("disabled", False)
+        and str(item.get("status", "")).strip().lower() not in ("disabled", "error")
     )
 
 
@@ -175,17 +173,17 @@ def _normalize_solver(solver: str | None) -> str:
     return "yescaptcha"
 
 
-def _trigger_register(missing_count: int, *, config: CpaMaintenanceConfig, remaining_count: int) -> dict[str, Any]:
+def _trigger_register(count: int, *, config: CpaMaintenanceConfig, remaining: int) -> dict[str, Any]:
     from api.tasks import RegisterTaskRequest, enqueue_register_task, has_active_register_task
 
     if has_active_register_task(platform="chatgpt", source=AUTO_REGISTER_SOURCE):
-        print("[CPA] 已存在进行中的自动补注册任务，跳过本轮补注册")
+        print(f"[CPA] 已存在进行中的自动补注册任务，跳过本轮")
         return {"triggered": False, "reason": "task_running"}
 
     config_store = _get_config_store()
     req = RegisterTaskRequest(
         platform="chatgpt",
-        count=missing_count,
+        count=count,
         concurrency=config.concurrency,
         register_delay_seconds=config.register_delay_seconds,
         executor_type=_normalize_executor(config_store.get("default_executor", "protocol")),
@@ -196,50 +194,47 @@ def _trigger_register(missing_count: int, *, config: CpaMaintenanceConfig, remai
         req,
         source=AUTO_REGISTER_SOURCE,
         meta={
-            "remaining": remaining_count,
+            "remaining": remaining,
             "threshold": config.threshold,
-            "missing": missing_count,
+            "missing": count,
         },
     )
     print(
-        f"[CPA] 剩余凭证 {remaining_count} 低于阈值 {config.threshold}，"
-        f"已创建自动注册任务 {task_id}，补充 {missing_count} 个"
+        f"[CPA] 号池 {remaining}/{config.threshold}，"
+        f"已创建注册任务 {task_id}，补充 {count} 个"
     )
-    return {"triggered": True, "task_id": task_id}
+    return {"triggered": True, "task_id": task_id, "count": count}
 
 
 def maintain_cpa_credentials() -> dict[str, Any]:
+    """
+    CPA 号池维护（简化版）。
+
+    CLIProxyAPI 已实时删除坏号（401/403-banned/429-free），
+    本函数只需：查数量 → 不足就补注册。
+    """
     config = get_cpa_maintenance_config()
     if not config.enabled:
         return {"ok": False, "reason": "disabled"}
 
+    # 查询号池
     files = list_auth_files()
-    error_names = _error_names(files)
-    deleted_count = 0
+    remaining = _count_healthy(files)
 
-    if error_names:
-        delete_auth_files(error_names)
-        deleted_count = len(error_names)
-        print(f"[CPA] 已删除 {deleted_count} 个 status=error 的凭证")
-        files = list_auth_files()
-
-    remaining_count = _count_remaining(files)
     result: dict[str, Any] = {
         "ok": True,
-        "deleted": deleted_count,
-        "remaining": remaining_count,
+        "total": len(files),
+        "remaining": remaining,
         "threshold": config.threshold,
     }
 
-    if remaining_count >= config.threshold:
-        print(f"[CPA] 剩余凭证 {remaining_count}，阈值 {config.threshold}，无需补注册")
-        result["register"] = {"triggered": False, "reason": "enough_credentials"}
+    if remaining >= config.threshold:
+        print(f"[CPA] 号池充足: {remaining}/{config.threshold}，无需补充")
+        result["register"] = {"triggered": False, "reason": "pool_sufficient"}
         return result
 
-    missing_count = config.threshold - remaining_count
-    result["register"] = _trigger_register(
-        missing_count,
-        config=config,
-        remaining_count=remaining_count,
-    )
+    # 号池不足，补注册
+    missing = config.threshold - remaining
+    print(f"[CPA] 号池不足: {remaining}/{config.threshold}，需补充 {missing} 个")
+    result["register"] = _trigger_register(missing, config=config, remaining=remaining)
     return result
