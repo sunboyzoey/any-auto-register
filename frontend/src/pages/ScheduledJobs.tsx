@@ -66,7 +66,7 @@ export default function ScheduledJobs() {
     form.resetFields()
     form.setFieldsValue({
       platform: 'chatgpt', cron_time: dayjs('09:00', 'HH:mm'),
-      count: 1, concurrency: 1, mail_provider: 'outlook', proxy: 'http://127.0.0.1:7890',
+      count: 1, concurrency: 1, mail_provider: 'outlook', proxy: '',
       enabled: true,
     })
     setEditOpen(true)

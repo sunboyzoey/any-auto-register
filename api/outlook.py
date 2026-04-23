@@ -1,15 +1,19 @@
 """Outlook 邮箱账号池管理 API"""
 
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import threading
+import time
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from sqlmodel import Session, select, func, col
 
 from core.db import engine, OutlookAccountModel
 
 router = APIRouter(prefix="/outlook", tags=["outlook"])
+MAX_FINISHED_IMPORT_TASKS = 20
 
 
 def _utcnow():
@@ -46,6 +50,155 @@ class OutlookBatchUpdateStatusRequest(BaseModel):
     gpt_register_status: Optional[str] = None
     grok_register_status: Optional[str] = None
     enabled: Optional[bool] = None
+
+
+@dataclass
+class OutlookImportTaskRecord:
+    id: str
+    total: int
+    status: str = "pending"
+    progress: str = "0/0"
+    processed: int = 0
+    success: int = 0
+    failed: int = 0
+    deleted_bad: int = 0
+    graph_count: int = 0
+    imap_pop_count: int = 0
+    errors: list[str] = field(default_factory=list)
+    created_at: float = field(default_factory=time.time)
+    updated_at: float = field(default_factory=time.time)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "status": self.status,
+            "progress": self.progress,
+            "total": self.total,
+            "processed": self.processed,
+            "success": self.success,
+            "failed": self.failed,
+            "deleted_bad": self.deleted_bad,
+            "graph_count": self.graph_count,
+            "imap_pop_count": self.imap_pop_count,
+            "errors": list(self.errors),
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+
+class OutlookImportTaskStore:
+    def __init__(self, *, max_finished_tasks: int = MAX_FINISHED_IMPORT_TASKS):
+        self._lock = threading.Lock()
+        self._records: Dict[str, OutlookImportTaskRecord] = {}
+        self.max_finished_tasks = max_finished_tasks
+
+    def create(self, task_id: str, *, total: int) -> OutlookImportTaskRecord:
+        with self._lock:
+            record = OutlookImportTaskRecord(
+                id=task_id,
+                total=total,
+                progress=f"0/{total}",
+            )
+            self._records[task_id] = record
+            return record
+
+    def exists(self, task_id: str) -> bool:
+        with self._lock:
+            return task_id in self._records
+
+    def snapshot(self, task_id: str) -> Dict[str, Any]:
+        with self._lock:
+            record = self._records[task_id]
+            return record.to_dict()
+
+    def list_snapshots(self) -> list[Dict[str, Any]]:
+        with self._lock:
+            records = list(self._records.values())
+            records.sort(key=lambda record: record.updated_at, reverse=True)
+            return [record.to_dict() for record in records]
+
+    def mark_running(self, task_id: str) -> None:
+        with self._lock:
+            record = self._records[task_id]
+            record.status = "running"
+            record.updated_at = time.time()
+
+    def update(
+        self,
+        task_id: str,
+        *,
+        processed: Optional[int] = None,
+        success: Optional[int] = None,
+        failed: Optional[int] = None,
+        deleted_bad: Optional[int] = None,
+        graph_count: Optional[int] = None,
+        imap_pop_count: Optional[int] = None,
+        append_error: Optional[str] = None,
+    ) -> None:
+        with self._lock:
+            record = self._records[task_id]
+            if processed is not None:
+                record.processed = processed
+                record.progress = f"{processed}/{record.total}"
+            if success is not None:
+                record.success = success
+            if failed is not None:
+                record.failed = failed
+            if deleted_bad is not None:
+                record.deleted_bad = deleted_bad
+            if graph_count is not None:
+                record.graph_count = graph_count
+            if imap_pop_count is not None:
+                record.imap_pop_count = imap_pop_count
+            if append_error:
+                record.errors.append(append_error)
+            record.updated_at = time.time()
+
+    def finish(self, task_id: str, *, status: str = "done") -> None:
+        with self._lock:
+            record = self._records[task_id]
+            record.status = status
+            record.progress = f"{record.processed}/{record.total}"
+            record.updated_at = time.time()
+            self._cleanup_finished_locked()
+
+    def fail(self, task_id: str, message: str) -> None:
+        with self._lock:
+            record = self._records[task_id]
+            record.status = "failed"
+            record.errors.append(message)
+            record.updated_at = time.time()
+            self._cleanup_finished_locked()
+
+    def _cleanup_finished_locked(self) -> None:
+        finished = [
+            record_id
+            for record_id, record in self._records.items()
+            if record.status in {"done", "failed"}
+        ]
+        overflow = len(finished) - self.max_finished_tasks
+        if overflow <= 0:
+            return
+        finished.sort(key=lambda record_id: self._records[record_id].updated_at)
+        for record_id in finished[:overflow]:
+            self._records.pop(record_id, None)
+
+
+_import_task_store = OutlookImportTaskStore()
+
+
+def _count_import_lines(data: str) -> int:
+    total = 0
+    for raw_line in (data or "").splitlines():
+        line = str(raw_line or "").strip()
+        if line and not line.startswith("#"):
+            total += 1
+    return total
+
+
+def _ensure_import_task_exists(task_id: str) -> None:
+    if not _import_task_store.exists(task_id):
+        raise HTTPException(404, "导入任务不存在")
 
 
 # ── 列表 & 统计 ──────────────────────────────────────────────
@@ -285,122 +438,140 @@ def delete_all_outlook(
     return {"deleted": deleted}
 
 
-# ── 批量导入（含取码类型探测） ─────────────────────────────────
+# ── 批量导入（后台任务） ───────────────────────────────────────
 
-@router.post("/batch-import")
-def batch_import_outlook(request: OutlookBatchImportRequest):
-    """
-    批量导入 Outlook 邮箱账户
-
-    固定格式（每行一个，字段用 ---- 分隔）：
-        邮箱----密码----刷新令牌----Client ID
-
-    导入后自动探测取码类型（Graph / IMAP / POP），探测完成后返回结果。
-    """
+def _execute_outlook_batch_import(task_id: str, request: OutlookBatchImportRequest) -> None:
     from core.outlook_probe import classify_mail_access_type
 
+    _import_task_store.mark_running(task_id)
+
     lines = (request.data or "").splitlines()
+    processed = 0
     success = 0
     failed = 0
     deleted_bad = 0
     graph_count = 0
     imap_pop_count = 0
-    accounts: List[Dict[str, Any]] = []
-    errors: List[str] = []
 
-    for idx, raw_line in enumerate(lines, start=1):
-        line = str(raw_line or "").strip()
-        if not line or line.startswith("#"):
-            continue
+    try:
+        for idx, raw_line in enumerate(lines, start=1):
+            line = str(raw_line or "").strip()
+            if not line or line.startswith("#"):
+                continue
 
-        parts = [part.strip() for part in line.split("----")]
-        if len(parts) != 4:
-            failed += 1
-            errors.append(f"行 {idx}: 格式错误，应为 邮箱----密码----刷新令牌----Client ID")
-            continue
-
-        email, password, refresh_token, client_id = parts
-        if not email or "@" not in email:
-            failed += 1
-            errors.append(f"行 {idx}: 无效的邮箱地址: {email}")
-            continue
-
-        # 探测取码类型
-        mail_access_type = classify_mail_access_type(email, refresh_token, client_id)
-        if mail_access_type is None:
-            # 取码不可达，跳过并清理已有记录
-            with Session(engine) as session:
-                existing = session.exec(
-                    select(OutlookAccountModel).where(OutlookAccountModel.email == email)
-                ).first()
-                if existing:
-                    session.delete(existing)
-                    session.commit()
-            deleted_bad += 1
-            errors.append(f"行 {idx}: {email} 取码类型探测失败（Graph/IMAP/POP 均不可达），已跳过")
-            continue
-
-        if mail_access_type == "graph":
-            graph_count += 1
-        elif mail_access_type == "imap_pop":
-            imap_pop_count += 1
-
-        # 入库
-        try:
-            with Session(engine) as session:
-                existing = session.exec(
-                    select(OutlookAccountModel).where(OutlookAccountModel.email == email)
-                ).first()
-
-                if existing:
-                    existing.password = password
-                    existing.refresh_token = refresh_token
-                    existing.client_id = client_id
-                    existing.mail_access_type = mail_access_type
-                    existing.enabled = bool(request.enabled)
-                    existing.updated_at = _utcnow()
-                    session.add(existing)
-                    session.commit()
-                    session.refresh(existing)
-                    accounts.append({
-                        "id": existing.id,
-                        "email": existing.email,
-                        "mail_access_type": mail_access_type,
-                        "updated": True,
-                    })
+            error_message = ""
+            parts = [part.strip() for part in line.split("----")]
+            if len(parts) != 4:
+                failed += 1
+                error_message = f"行 {idx}: 格式错误，应为 邮箱----密码----刷新令牌----Client ID"
+            else:
+                email, password, refresh_token, client_id = parts
+                if not email or "@" not in email:
+                    failed += 1
+                    error_message = f"行 {idx}: 无效的邮箱地址: {email}"
                 else:
-                    account = OutlookAccountModel(
-                        email=email,
-                        password=password,
-                        refresh_token=refresh_token,
-                        client_id=client_id,
-                        mail_access_type=mail_access_type,
-                        enabled=bool(request.enabled),
-                        created_at=_utcnow(),
-                        updated_at=_utcnow(),
-                    )
-                    session.add(account)
-                    session.commit()
-                    session.refresh(account)
-                    accounts.append({
-                        "id": account.id,
-                        "email": account.email,
-                        "mail_access_type": mail_access_type,
-                    })
-                success += 1
-        except Exception as e:
-            failed += 1
-            errors.append(f"行 {idx}: 入库失败: {str(e)}")
+                    mail_access_type = classify_mail_access_type(email, refresh_token, client_id)
+                    if mail_access_type is None:
+                        with Session(engine) as session:
+                            existing = session.exec(
+                                select(OutlookAccountModel).where(OutlookAccountModel.email == email)
+                            ).first()
+                            if existing:
+                                session.delete(existing)
+                                session.commit()
+                        deleted_bad += 1
+                        error_message = (
+                            f"行 {idx}: {email} 取码类型探测失败（Graph/IMAP/POP 均不可达），已跳过"
+                        )
+                    else:
+                        if mail_access_type == "graph":
+                            graph_count += 1
+                        elif mail_access_type == "imap_pop":
+                            imap_pop_count += 1
 
-    return {
-        "success": success,
-        "failed": failed,
-        "deleted_bad": deleted_bad,
-        "graph_count": graph_count,
-        "imap_pop_count": imap_pop_count,
-        "accounts": accounts,
-        "errors": errors,
-    }
+                        try:
+                            with Session(engine) as session:
+                                existing = session.exec(
+                                    select(OutlookAccountModel).where(OutlookAccountModel.email == email)
+                                ).first()
+
+                                if existing:
+                                    existing.password = password
+                                    existing.refresh_token = refresh_token
+                                    existing.client_id = client_id
+                                    existing.mail_access_type = mail_access_type
+                                    existing.enabled = bool(request.enabled)
+                                    existing.updated_at = _utcnow()
+                                    session.add(existing)
+                                    session.commit()
+                                else:
+                                    account = OutlookAccountModel(
+                                        email=email,
+                                        password=password,
+                                        refresh_token=refresh_token,
+                                        client_id=client_id,
+                                        mail_access_type=mail_access_type,
+                                        enabled=bool(request.enabled),
+                                        created_at=_utcnow(),
+                                        updated_at=_utcnow(),
+                                    )
+                                    session.add(account)
+                                    session.commit()
+                            success += 1
+                        except Exception as e:
+                            failed += 1
+                            error_message = f"行 {idx}: 入库失败: {str(e)}"
+
+            processed += 1
+            _import_task_store.update(
+                task_id,
+                processed=processed,
+                success=success,
+                failed=failed,
+                deleted_bad=deleted_bad,
+                graph_count=graph_count,
+                imap_pop_count=imap_pop_count,
+                append_error=error_message or None,
+            )
+
+        _import_task_store.finish(task_id, status="done")
+    except Exception as e:
+        _import_task_store.fail(task_id, f"导入任务异常: {e}")
+
+
+@router.post("/batch-import")
+def batch_import_outlook(request: OutlookBatchImportRequest):
+    """
+    批量导入 Outlook 邮箱账户。
+
+    固定格式（每行一个，字段用 ---- 分隔）：
+        邮箱----密码----刷新令牌----Client ID
+
+    导入后自动在后台探测取码类型（Graph / IMAP / POP）。
+    """
+    total = _count_import_lines(request.data)
+    task_id = f"outlook_import_{int(time.time() * 1000)}"
+    _import_task_store.create(task_id, total=total)
+    thread = threading.Thread(
+        target=_execute_outlook_batch_import,
+        args=(task_id, request),
+        daemon=True,
+        name=f"outlook-import-{task_id}",
+    )
+    thread.start()
+    return {"task_id": task_id, "total": total}
+
+
+@router.get("/import-tasks/{task_id}")
+def get_import_task(task_id: str):
+    _ensure_import_task_exists(task_id)
+    return _import_task_store.snapshot(task_id)
+
+
+@router.get("/import-tasks")
+def list_import_tasks(limit: int = Query(20, ge=1, le=100)):
+    items = _import_task_store.list_snapshots()[:limit]
+    return {"total": len(items), "items": items}
 
 
 # ── 取码类型探测 ─────────────────────────────────────────────

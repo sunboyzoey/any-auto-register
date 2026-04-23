@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import {
   Table,
   Button,
@@ -86,6 +86,22 @@ interface Stats {
   grok: { registered: number; unregistered: number; in_progress: number }
 }
 
+interface ImportTaskSnapshot {
+  id: string
+  status: 'pending' | 'running' | 'done' | 'failed'
+  progress: string
+  total: number
+  processed: number
+  success: number
+  failed: number
+  deleted_bad: number
+  graph_count: number
+  imap_pop_count: number
+  errors: string[]
+  created_at?: number
+  updated_at?: number
+}
+
 export default function OutlookAccounts() {
   const { message: msg, modal } = App.useApp()
   const { token: themeToken } = theme.useToken()
@@ -111,9 +127,13 @@ export default function OutlookAccounts() {
   const [importOpen, setImportOpen] = useState(false)
   const [importText, setImportText] = useState('')
   const [importLoading, setImportLoading] = useState(false)
+  const [importTaskId, setImportTaskId] = useState('')
+  const [importTask, setImportTask] = useState<ImportTaskSnapshot | null>(null)
+  const [importTasks, setImportTasks] = useState<ImportTaskSnapshot[]>([])
   const [editOpen, setEditOpen] = useState(false)
   const [editRecord, setEditRecord] = useState<OutlookAccount | null>(null)
   const [editForm] = Form.useForm()
+  const importTaskHandledRef = useRef('')
 
   // ── 数据加载 ──
   const loadStats = useCallback(async () => {
@@ -143,12 +163,94 @@ export default function OutlookAccounts() {
     }
   }, [page, pageSize, keyword, filterMailType, filterGptStatus, filterGrokStatus, filterEnabled])
 
+  const loadImportTasks = useCallback(async () => {
+    try {
+      const data = await apiFetch('/outlook/import-tasks?limit=20') as { items?: ImportTaskSnapshot[] }
+      const items = data.items || []
+      setImportTasks(items)
+
+      if (!importTaskId) {
+        const active = items.find((item) => item.status === 'pending' || item.status === 'running')
+        if (active) {
+          setImportTaskId(active.id)
+          setImportTask(active)
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }, [importTaskId])
+
   useEffect(() => { loadAccounts() }, [loadAccounts])
   useEffect(() => { loadStats() }, [loadStats])
+  useEffect(() => { loadImportTasks() }, [loadImportTasks])
+
+  useEffect(() => {
+    if (!importTaskId) return
+    let cancelled = false
+    let timer: number | null = null
+
+    const poll = async () => {
+      try {
+        const data = await apiFetch(`/outlook/import-tasks/${importTaskId}`) as ImportTaskSnapshot
+        if (cancelled) return
+        setImportTask(data)
+        setImportTasks((previous) => {
+          const next = previous.filter((item) => item.id !== data.id)
+          next.unshift(data)
+          return next.sort((a, b) => Number(b.updated_at || 0) - Number(a.updated_at || 0)).slice(0, 20)
+        })
+
+        if (data.status === 'done' || data.status === 'failed') {
+          if (importTaskHandledRef.current !== data.id) {
+            importTaskHandledRef.current = data.id
+            const parts: string[] = []
+            if (data.success) parts.push(`成功 ${data.success} 条`)
+            if (data.graph_count) parts.push(`Graph ${data.graph_count}`)
+            if (data.imap_pop_count) parts.push(`IMAP/POP ${data.imap_pop_count}`)
+            if (data.deleted_bad) parts.push(`不可达已跳过 ${data.deleted_bad}`)
+            if (data.failed) parts.push(`失败 ${data.failed}`)
+            if (data.status === 'done') {
+              msg.success(`导入完成：${parts.join('，') || '无可导入数据'}`)
+            } else {
+              msg.error(data.errors?.[0] || '导入任务失败')
+            }
+            if (data.errors?.length) {
+              Modal.warning({
+                title: '部分导入异常',
+                content: (
+                  <div style={{ maxHeight: 300, overflow: 'auto', whiteSpace: 'pre-wrap', fontFamily: 'monospace', fontSize: 12 }}>
+                    {data.errors.join('\n')}
+                  </div>
+                ),
+                width: 560,
+              })
+            }
+            reload()
+            void loadImportTasks()
+          }
+          return
+        }
+
+        timer = window.setTimeout(poll, 2000)
+      } catch (e: any) {
+        if (!cancelled) {
+          msg.error(`获取导入任务状态失败: ${e.message}`)
+        }
+      }
+    }
+
+    void poll()
+    return () => {
+      cancelled = true
+      if (timer !== null) window.clearTimeout(timer)
+    }
+  }, [importTaskId, msg, loadImportTasks])
 
   const reload = () => {
     loadAccounts()
     loadStats()
+    loadImportTasks()
     setSelectedRowKeys([])
   }
 
@@ -226,27 +328,24 @@ export default function OutlookAccounts() {
         method: 'POST',
         body: JSON.stringify({ data: text, enabled: true }),
       })
-      const parts: string[] = []
-      if (res.success) parts.push(`成功 ${res.success} 条`)
-      if (res.graph_count) parts.push(`Graph ${res.graph_count}`)
-      if (res.imap_pop_count) parts.push(`IMAP/POP ${res.imap_pop_count}`)
-      if (res.deleted_bad) parts.push(`不可达已跳过 ${res.deleted_bad}`)
-      if (res.failed) parts.push(`失败 ${res.failed}`)
-      msg.success(`导入完成：${parts.join('，')}`)
-      if (res.errors?.length) {
-        Modal.warning({
-          title: '部分导入异常',
-          content: (
-            <div style={{ maxHeight: 300, overflow: 'auto', whiteSpace: 'pre-wrap', fontFamily: 'monospace', fontSize: 12 }}>
-              {res.errors.join('\n')}
-            </div>
-          ),
-          width: 560,
-        })
-      }
+      importTaskHandledRef.current = ''
+      setImportTaskId(res.task_id)
+      setImportTask({
+        id: res.task_id,
+        status: 'pending',
+        progress: `0/${res.total || 0}`,
+        total: res.total || 0,
+        processed: 0,
+        success: 0,
+        failed: 0,
+        deleted_bad: 0,
+        graph_count: 0,
+        imap_pop_count: 0,
+        errors: [],
+      })
+      msg.success(`导入任务已启动，后台处理中${res.total ? `（共 ${res.total} 行）` : ''}`)
       setImportOpen(false)
       setImportText('')
-      reload()
     } catch (e: any) {
       msg.error(`导入失败: ${e.message}`)
     } finally {
@@ -580,6 +679,116 @@ export default function OutlookAccounts() {
         </Space>
       </Card>
 
+      {importTask && (
+        <Card
+          size="small"
+          title="后台导入任务"
+          extra={
+            importTask.status === 'done' || importTask.status === 'failed' ? (
+              <Button size="small" onClick={() => { setImportTask(null); setImportTaskId('') }}>
+                隐藏
+              </Button>
+            ) : (
+              <Tag color="processing">进行中</Tag>
+            )
+          }
+        >
+          <Space wrap size={[12, 8]}>
+            <Tag color={
+              importTask.status === 'done'
+                ? 'success'
+                : importTask.status === 'failed'
+                  ? 'error'
+                  : 'processing'
+            }
+            >
+              {importTask.status === 'done' ? '已完成' : importTask.status === 'failed' ? '失败' : '运行中'}
+            </Tag>
+            <span>进度 {importTask.processed}/{importTask.total}</span>
+            <span>成功 {importTask.success}</span>
+            <span>失败 {importTask.failed}</span>
+            <span>不可达跳过 {importTask.deleted_bad}</span>
+            <span>Graph {importTask.graph_count}</span>
+            <span>IMAP/POP {importTask.imap_pop_count}</span>
+          </Space>
+        </Card>
+      )}
+
+      <Card
+        size="small"
+        title="导入任务列表"
+        extra={<Button size="small" onClick={loadImportTasks}>刷新任务</Button>}
+      >
+        <Table
+          rowKey="id"
+          size="small"
+          pagination={false}
+          dataSource={importTasks}
+          locale={{ emptyText: '暂无导入任务' }}
+          columns={[
+            {
+              title: '任务 ID',
+              dataIndex: 'id',
+              key: 'id',
+              render: (value: string, record: ImportTaskSnapshot) => (
+                <Button
+                  type="link"
+                  style={{ padding: 0, fontFamily: 'monospace' }}
+                  onClick={() => {
+                    setImportTaskId(record.id)
+                    setImportTask(record)
+                  }}
+                >
+                  {value}
+                </Button>
+              ),
+            },
+            {
+              title: '状态',
+              dataIndex: 'status',
+              key: 'status',
+              width: 100,
+              render: (value: string) => (
+                <Tag color={
+                  value === 'done'
+                    ? 'success'
+                    : value === 'failed'
+                      ? 'error'
+                      : 'processing'
+                }
+                >
+                  {value === 'done' ? '已完成' : value === 'failed' ? '失败' : '运行中'}
+                </Tag>
+              ),
+            },
+            {
+              title: '进度',
+              key: 'progress',
+              width: 120,
+              render: (_: unknown, record: ImportTaskSnapshot) => `${record.processed}/${record.total}`,
+            },
+            {
+              title: '结果',
+              key: 'summary',
+              render: (_: unknown, record: ImportTaskSnapshot) => (
+                <span>
+                  成功 {record.success} / 失败 {record.failed} / 跳过 {record.deleted_bad}
+                </span>
+              ),
+            },
+            {
+              title: '更新时间',
+              dataIndex: 'updated_at',
+              key: 'updated_at',
+              width: 180,
+              render: (value?: number) => (
+                value ? new Date(value * 1000).toLocaleString('zh-CN') : '-'
+              ),
+            },
+          ]}
+        />
+      </Card>
+
       {/* ── 表格 ── */}
       <Card
         title={
@@ -650,7 +859,7 @@ export default function OutlookAccounts() {
             <code>邮箱----密码----刷新令牌----Client ID</code>
           </p>
           <p style={{ margin: '8px 0 0', fontSize: 12, color: themeToken.colorTextTertiary }}>
-            导入时会自动探测每个账号的取码类型（Graph API / IMAP / POP），不可达的账号将被跳过。探测过程可能需要一些时间，请耐心等待。
+            导入时会自动探测每个账号的取码类型（Graph API / IMAP / POP），不可达的账号将被跳过。提交后会转为后台任务，不会因请求超时而中断。
           </p>
         </div>
         <Input.TextArea

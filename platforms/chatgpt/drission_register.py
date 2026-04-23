@@ -7,10 +7,13 @@ DrissionPage 浏览器自动化 ChatGPT 注册引擎
 import json
 import os
 import random
+import re
 import secrets
 import string
+import sys
 import time
-from datetime import datetime
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
 from DrissionPage import ChromiumOptions, ChromiumPage
@@ -81,6 +84,181 @@ def _wait_for_url(page, url_part: str, timeout: int = 15) -> bool:
     return False
 
 
+def _capture_debug_snapshot(page, name: str) -> str:
+    try:
+        os.makedirs(RESULTS_DIR, exist_ok=True)
+        path = os.path.join(
+            RESULTS_DIR,
+            f"{name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png",
+        )
+        page.get_screenshot(path=path, full_page=True)
+        return path
+    except Exception:
+        return ""
+
+
+def _collect_page_diagnostics(page) -> dict:
+    try:
+        return page.run_js(
+            """
+            (() => {
+              const pick = (sel) => Array.from(document.querySelectorAll(sel)).slice(0, 8).map(el => ({
+                tag: el.tagName,
+                type: el.getAttribute('type'),
+                name: el.getAttribute('name'),
+                placeholder: el.getAttribute('placeholder'),
+                text: (el.innerText || el.value || '').trim().slice(0, 80),
+              }));
+              return {
+                url: location.href,
+                title: document.title,
+                bodyPreview: (document.body?.innerText || '').trim().slice(0, 600),
+                inputs: pick('input'),
+                buttons: pick('button'),
+              };
+            })()
+            """
+        ) or {}
+    except Exception:
+        return {"url": getattr(page, "url", ""), "title": "", "bodyPreview": ""}
+
+
+def _extract_page_errors(page) -> list[str]:
+    try:
+        errors = page.run_js(
+            """
+            (() => {
+              const values = [];
+              document.querySelectorAll('[class*="error"], [role="alert"], .react-aria-FieldError').forEach(el => {
+                const text = (el.textContent || '').trim();
+                if (text) values.push(text);
+              });
+              return values;
+            })()
+            """
+        )
+        if isinstance(errors, list):
+            return [str(item).strip() for item in errors if str(item).strip()]
+    except Exception:
+        pass
+    return []
+
+
+def _detect_browser_error(page) -> str:
+    diag = _collect_page_diagnostics(page)
+    haystack = " ".join(
+        [
+            str(diag.get("title") or ""),
+            str(diag.get("bodyPreview") or ""),
+            str(diag.get("url") or ""),
+        ]
+    ).lower()
+
+    if "err_proxy_connection_failed" in haystack:
+        return "代理连接失败"
+    if "something wrong with the proxy server" in haystack:
+        return "代理连接失败"
+    if "checking the proxy address" in haystack:
+        return "代理连接失败"
+    if "err_tunnel_connection_failed" in haystack:
+        return "代理隧道连接失败"
+    if "err_connection_refused" in haystack:
+        return "目标连接被拒绝"
+    if "err_name_not_resolved" in haystack:
+        return "DNS 解析失败"
+    if "no internet" in haystack:
+        return "网络连接失败"
+    return ""
+
+
+def _open_signup_entry(page) -> bool:
+    signup_selectors = [
+        "text:Sign up for free",
+        "text:Sign up",
+        "text:Get started",
+        "text:免费注册",
+        "text:注册",
+        "css:button[data-testid='signup-button']",
+        "css:a[data-testid='signup-button']",
+    ]
+    for sel in signup_selectors:
+        try:
+            btn = page.ele(sel, timeout=2)
+            if btn:
+                btn.click()
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _wait_email_input(page, timeout: int = 20):
+    selectors = [
+        'css:input[type="email"]',
+        'css:input[name="email"]',
+        'css:input[name="username"]',
+        'css:input[placeholder*="Email"]',
+        'css:input[autocomplete="email"]',
+    ]
+    start = time.time()
+    reopened = False
+    while time.time() - start < timeout:
+        if _is_browser_closed(page):
+            return None
+        for sel in selectors:
+            try:
+                inp = page.ele(sel, timeout=1)
+                if inp:
+                    return inp
+            except Exception:
+                continue
+        if not reopened and "chatgpt.com" in page.url:
+            _open_signup_entry(page)
+            reopened = True
+        time.sleep(1)
+    return None
+
+
+def _resolve_browser_executable() -> str:
+    candidates: list[str] = []
+
+    for env_key in (
+        "DRISSION_BROWSER_PATH",
+        "CHROME_PATH",
+        "CHROMIUM_PATH",
+        "GOOGLE_CHROME_SHIM",
+    ):
+        value = str(os.getenv(env_key, "") or "").strip()
+        if value:
+            candidates.append(value)
+
+    candidates.extend(
+        [
+            "/usr/bin/google-chrome",
+            "/usr/bin/google-chrome-stable",
+            "/usr/bin/chromium",
+            "/usr/bin/chromium-browser",
+            "/opt/google/chrome/chrome",
+        ]
+    )
+
+    ms_playwright_root = Path.home() / ".cache" / "ms-playwright"
+    if ms_playwright_root.exists():
+        for pattern in ("chromium-*/chrome-linux*/chrome", "chromium-*/chrome-linux/chrome"):
+            for path in sorted(ms_playwright_root.glob(pattern), reverse=True):
+                candidates.append(str(path))
+
+    seen = set()
+    for candidate in candidates:
+        value = str(candidate or "").strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        if os.path.isfile(value) and os.access(value, os.X_OK):
+            return value
+    return ""
+
+
 # ── 浏览器创建 ────────────────────────────────────────────────────
 
 def create_browser(proxy: str = "", headless: bool = False) -> Optional[ChromiumPage]:
@@ -89,6 +267,12 @@ def create_browser(proxy: str = "", headless: bool = False) -> Optional[Chromium
         co.auto_port()
         co.new_env()
         co.incognito()
+
+        if sys.platform.startswith("linux"):
+            browser_path = _resolve_browser_executable()
+            if browser_path:
+                co.set_browser_path(browser_path)
+                _log("Browser", f"Linux 使用浏览器: {browser_path}")
 
         if headless:
             co.headless()
@@ -222,33 +406,118 @@ def _outlook_get_access_token(client_id: str, refresh_token: str) -> str:
     return ""
 
 
+_OUTLOOK_OPENAI_SENDERS = {
+    "noreply@tm.openai.com",
+    "noreply@openai.com",
+    "noreply@email.openai.com",
+}
+_OUTLOOK_OPENAI_SUBJECT_KEYWORDS = {"openai", "chatgpt"}
+
+
+def _parse_graph_datetime(value: str) -> float:
+    text = str(value or "").strip()
+    if not text:
+        return 0.0
+    try:
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        return datetime.fromisoformat(text).timestamp()
+    except Exception:
+        return 0.0
+
+
+def _is_invalid_otp_candidate(code: str) -> bool:
+    value = str(code or "").strip()
+    if len(value) != 6 or not value.isdigit():
+        return True
+    if value == "000000":
+        return True
+    if len(set(value)) == 1:
+        return True
+    return False
+
+
+def _pick_outlook_openai_code(
+    messages: list[dict],
+    *,
+    exclude_codes: set[str],
+    received_after_ts: float = 0.0,
+) -> tuple[str | None, dict | None]:
+    for message in messages or []:
+        sender = str(
+            ((message.get("from") or {}).get("emailAddress") or {}).get("address", "")
+        ).strip().lower()
+        subject = str(message.get("subject", "") or "")
+        subject_lower = subject.lower()
+        if sender not in _OUTLOOK_OPENAI_SENDERS:
+            continue
+        if not any(keyword in subject_lower for keyword in _OUTLOOK_OPENAI_SUBJECT_KEYWORDS):
+            continue
+
+        received_ts = _parse_graph_datetime(message.get("receivedDateTime", ""))
+        if received_after_ts and received_ts and received_ts < received_after_ts:
+            continue
+
+        preview = str(message.get("bodyPreview", "") or "")
+        body = str((message.get("body") or {}).get("content", "") or "")
+        text = f"{subject} {preview} {body}"
+        codes = re.findall(r"\b(\d{6})\b", text)
+        for code in codes:
+            if code in exclude_codes or _is_invalid_otp_candidate(code):
+                continue
+            return code, {
+                "sender": sender,
+                "subject": subject,
+                "received_ts": received_ts,
+                "received_at": message.get("receivedDateTime", ""),
+            }
+    return None, None
+
+
+def _summarize_outlook_message(message: dict) -> dict:
+    sender = str(
+        ((message.get("from") or {}).get("emailAddress") or {}).get("address", "")
+    ).strip().lower()
+    return {
+        "sender": sender,
+        "subject": str(message.get("subject", "") or "")[:120],
+        "received_at": str(message.get("receivedDateTime", "") or ""),
+    }
+
+
 def _outlook_get_code(
     client_id: str,
     refresh_token: str,
     email: str,
     timeout: int = CODE_TIMEOUT,
     exclude_codes: set = None,
-) -> Optional[str]:
+    received_after_ts: float = 0.0,
+) -> dict:
     """从 Outlook Graph API 轮询获取 OpenAI 验证码"""
-    import re
     import requests
 
     exclude = exclude_codes or set()
     access_token = _outlook_get_access_token(client_id, refresh_token)
     if not access_token:
         _log("Outlook", "获取 Graph API access_token 失败", "ERROR")
-        return None
-
-    # OpenAI 验证码邮件的发件人和主题特征
-    OPENAI_SENDERS = {"noreply@tm.openai.com", "noreply@openai.com", "noreply@email.openai.com"}
-    OPENAI_SUBJECT_KEYWORDS = {"openai", "chatgpt", "verify", "verification", "code", "验证"}
+        return {
+            "code": None,
+            "reason": "access_token_failed",
+            "recent_messages": [],
+        }
 
     start = time.time()
     seen_ids = set()
+    logged_waiting = False
+    saw_openai_message = False
+    saw_openai_message_without_valid_code = False
+    recent_messages: list[dict] = []
+    folders = ["inbox", "junkemail", "archive", "deleteditems"]
 
     while time.time() - start < timeout:
         try:
-            for folder in ["inbox", "junkemail"]:
+            batch_recent_messages: list[dict] = []
+            for folder in folders:
                 resp = requests.get(
                     f"https://graph.microsoft.com/v1.0/me/mailFolders/{folder}/messages",
                     headers={"Authorization": f"Bearer {access_token}"},
@@ -263,36 +532,86 @@ def _outlook_get_code(
                     continue
 
                 messages = resp.json().get("value", [])
+                for message in messages[:2]:
+                    summary = _summarize_outlook_message(message)
+                    if summary not in batch_recent_messages:
+                        batch_recent_messages.append(summary)
+                for message in messages:
+                    sender = str(
+                        ((message.get("from") or {}).get("emailAddress") or {}).get("address", "")
+                    ).strip().lower()
+                    subject_lower = str(message.get("subject", "") or "").lower()
+                    if sender in _OUTLOOK_OPENAI_SENDERS and any(
+                        keyword in subject_lower for keyword in _OUTLOOK_OPENAI_SUBJECT_KEYWORDS
+                    ):
+                        received_ts = _parse_graph_datetime(message.get("receivedDateTime", ""))
+                        if not received_after_ts or not received_ts or received_ts >= received_after_ts:
+                            saw_openai_message = True
+
                 for m in messages:
                     mid = m.get("id", "")
                     if not mid or mid in seen_ids:
                         continue
                     seen_ids.add(mid)
-
-                    # 过滤发件人：只看 OpenAI 的邮件
-                    sender = ((m.get("from") or {}).get("emailAddress") or {}).get("address", "").lower()
-                    subject = m.get("subject", "")
-                    subject_lower = subject.lower()
-
-                    is_openai = sender in OPENAI_SENDERS or any(kw in subject_lower for kw in OPENAI_SUBJECT_KEYWORDS)
-                    if not is_openai:
-                        continue
-
-                    preview = m.get("bodyPreview", "")
-                    body = (m.get("body") or {}).get("content", "")
-                    text = f"{subject} {preview} {body}"
-
-                    codes = re.findall(r"\b(\d{6})\b", text)
-                    for code in codes:
-                        if code not in exclude:
-                            _log("Outlook", f"收到验证码: {code}")
-                            return code
+                    code, meta = _pick_outlook_openai_code(
+                        [m],
+                        exclude_codes=exclude,
+                        received_after_ts=received_after_ts,
+                    )
+                    if code:
+                        _log(
+                            "Outlook",
+                            f"收到验证码: {code} (from={meta.get('sender')}, at={meta.get('received_at')})",
+                        )
+                        return {
+                            "code": code,
+                            "reason": "ok",
+                            "recent_messages": batch_recent_messages[:5],
+                            "meta": meta,
+                        }
+                    sender = str(
+                        ((m.get("from") or {}).get("emailAddress") or {}).get("address", "")
+                    ).strip().lower()
+                    subject_lower = str(m.get("subject", "") or "").lower()
+                    if sender in _OUTLOOK_OPENAI_SENDERS and any(
+                        keyword in subject_lower for keyword in _OUTLOOK_OPENAI_SUBJECT_KEYWORDS
+                    ):
+                        received_ts = _parse_graph_datetime(m.get("receivedDateTime", ""))
+                        if not received_after_ts or not received_ts or received_ts >= received_after_ts:
+                            saw_openai_message_without_valid_code = True
+            if batch_recent_messages:
+                recent_messages = batch_recent_messages[:5]
+            if not logged_waiting:
+                _log("Outlook", "未发现符合条件的 OpenAI 新验证码邮件，继续轮询...")
+                logged_waiting = True
         except Exception as e:
             _log("Outlook", f"轮询异常: {e}", "WARN")
 
         time.sleep(POLL_INTERVAL)
 
-    return None
+    reason = "no_openai_mail"
+    if saw_openai_message_without_valid_code:
+        reason = "openai_mail_without_valid_code"
+    elif saw_openai_message:
+        reason = "openai_mail_seen_but_not_ready"
+    return {
+        "code": None,
+        "reason": reason,
+        "recent_messages": recent_messages,
+    }
+
+
+def _format_outlook_code_failure(result: dict) -> str:
+    reason = str((result or {}).get("reason", "") or "").strip()
+    if reason == "access_token_failed":
+        return "Outlook Graph API access_token 获取失败"
+    if reason == "openai_mail_without_valid_code":
+        return "Outlook 已收到 OpenAI 验证邮件，但未提取到有效验证码"
+    if reason == "openai_mail_seen_but_not_ready":
+        return "Outlook 已收到 OpenAI 验证邮件，但验证码尚未就绪"
+    if reason == "no_openai_mail":
+        return "Outlook 未收到 OpenAI 验证邮件"
+    return "验证码超时"
 
 
 # ── 注册流程 ──────────────────────────────────────────────────────
@@ -330,6 +649,10 @@ def do_register(
         if _is_browser_closed(page):
             return {"success": False, "error": "浏览器已关闭"}
 
+        browser_error = _detect_browser_error(page)
+        if browser_error:
+            return {"success": False, "error": browser_error}
+
         _log("Step1", f"页面已加载: {page.url}")
 
         # ── Step 2: 点击注册 → 填写邮箱 ──
@@ -337,41 +660,29 @@ def do_register(
 
         # 查找注册入口
         if "auth.openai.com" not in page.url:
-            signup_btn = None
-            for label in ["Sign up", "免费注册", "注册", "Get started"]:
-                try:
-                    btn = page.ele(f"text:{label}", timeout=3)
-                    if btn:
-                        signup_btn = btn
-                        break
-                except Exception:
-                    continue
-
-            if not signup_btn:
-                try:
-                    signup_btn = page.ele("@data-testid=login-button", timeout=3)
-                except Exception:
-                    pass
-
-            if signup_btn:
-                signup_btn.click()
+            if _open_signup_entry(page):
                 time.sleep(3)
             else:
                 _log("Step2", "未找到注册按钮", "WARN")
 
         # 填写邮箱
-        email_input = None
-        for sel in ['css:input[type="email"]', 'css:input[name="email"]', 'css:input[name="username"]']:
-            try:
-                inp = page.ele(sel, timeout=5)
-                if inp:
-                    email_input = inp
-                    break
-            except Exception:
-                continue
+        email_input = _wait_email_input(page, timeout=20)
 
         if not email_input:
-            return {"success": False, "error": "未找到邮箱输入框"}
+            browser_error = _detect_browser_error(page)
+            diag = _collect_page_diagnostics(page)
+            snap = _capture_debug_snapshot(page, "chatgpt_step2_email_missing")
+            _log(
+                "Step2",
+                f"未找到邮箱输入框, 诊断: {json.dumps(diag, ensure_ascii=False)[:600]}",
+                "WARN",
+            )
+            if snap:
+                _log("Step2", f"诊断截图已保存: {snap}", "WARN")
+            return {
+                "success": False,
+                "error": browser_error or "未找到邮箱输入框",
+            }
 
         email_input.click()
         time.sleep(0.2)
@@ -543,6 +854,12 @@ def do_register(
             page_text = page.html or ""
             if "already exists" in page_text.lower() or "已存在" in page_text:
                 return {"success": False, "error": "该邮箱已注册"}
+            page_errors = _extract_page_errors(page)
+            if page_errors:
+                snap = _capture_debug_snapshot(page, "chatgpt_step4_not_verified")
+                if snap:
+                    _log("Step4", f"密码页失败截图已保存: {snap}", "WARN")
+                return {"success": False, "error": page_errors[0]}
             return {"success": False, "error": f"未进入验证码页面, 当前: {page.url}"}
         else:
             # 获取验证码
@@ -551,19 +868,24 @@ def do_register(
             used_codes = set()
             code_verified = False
             start_code = time.time()
+            verification_started_at = time.time()
+            last_outlook_poll: dict = {}
 
             while time.time() - start_code < CODE_TIMEOUT:
                 if _is_browser_closed(page):
                     return {"success": False, "error": "浏览器已关闭"}
 
                 if provider == "outlook":
-                    code = _outlook_get_code(
+                    poll_result = _outlook_get_code(
                         client_id=mail_config.get("client_id", ""),
                         refresh_token=mail_config.get("refresh_token", ""),
                         email=email,
                         timeout=15,
                         exclude_codes=used_codes,
+                        received_after_ts=verification_started_at - 5,
                     )
+                    last_outlook_poll = poll_result
+                    code = poll_result.get("code")
                 else:
                     code = _cfworker_get_code(
                         api_url=mail_config.get("api_url", ""),
@@ -612,6 +934,18 @@ def do_register(
                     break
 
             if not code_verified and AUTH_URLS["about_you"] not in page.url:
+                if provider == "outlook":
+                    recent_messages = (last_outlook_poll or {}).get("recent_messages") or []
+                    if recent_messages:
+                        _log(
+                            "Outlook",
+                            f"最终超时前最近邮件样本: {json.dumps(recent_messages, ensure_ascii=False)[:500]}",
+                            "WARN",
+                        )
+                    return {
+                        "success": False,
+                        "error": _format_outlook_code_failure(last_outlook_poll),
+                    }
                 return {"success": False, "error": "验证码超时"}
 
             _log("Step4", "验证码已通过")
@@ -921,7 +1255,7 @@ def save_cookies(result: dict, output_path: str = "") -> dict:
 def register_chatgpt(
     email: str = "",
     password: str = "",
-    proxy: str = "http://127.0.0.1:7890",
+    proxy: str = "",
     headless: bool = False,
     cfworker_api_url: str = "",
     cfworker_admin_token: str = "",
@@ -1042,7 +1376,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="DrissionPage ChatGPT 注册")
     parser.add_argument("--email", default="", help="注册邮箱（留空自动生成）")
     parser.add_argument("--password", default="", help="密码（留空自动生成）")
-    parser.add_argument("--proxy", default="http://127.0.0.1:7890", help="代理")
+    parser.add_argument("--proxy", default="", help="代理")
     parser.add_argument("--headless", action="store_true", help="无头模式")
     parser.add_argument("--output", "-o", default="", help="Cookie 保存路径（留空自动生成）")
     parser.add_argument("--cfworker-api", default="", help="CF Worker API URL")

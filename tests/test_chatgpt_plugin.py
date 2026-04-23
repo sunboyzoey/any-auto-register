@@ -119,6 +119,40 @@ class ChatGPTPluginTests(unittest.TestCase):
         _, kwargs = mailbox.wait_call
         self.assertEqual(kwargs.get("timeout"), 90)
 
+    def test_execute_action_refresh_token_does_not_fallback_to_7890_proxy(self):
+        platform = ChatGPTPlatform(config=RegisterConfig())
+        account = type(
+            "AccountStub",
+            (),
+            {
+                "email": "demo@example.com",
+                "token": "",
+                "user_id": "",
+                "extra": {
+                    "refresh_token": "rt-demo",
+                    "client_id": "cid-demo",
+                },
+            },
+        )()
+
+        manager = mock.Mock()
+        manager.refresh_account.return_value = mock.Mock(
+            success=True,
+            access_token="access-demo",
+            refresh_token="refresh-demo",
+        )
+
+        with mock.patch("core.config_store.config_store.get", return_value=""), mock.patch(
+            "platforms.chatgpt.token_refresh.TokenRefreshManager",
+            return_value=manager,
+        ) as manager_cls:
+            result = platform.execute_action("refresh_token", account, {})
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["data"]["access_token"], "access-demo")
+        self.assertEqual(result["data"]["refresh_token"], "refresh-demo")
+        self.assertEqual(manager_cls.call_args.kwargs["proxy_url"], None)
+
 
 if __name__ == "__main__":
     unittest.main()

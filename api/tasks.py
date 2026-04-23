@@ -127,6 +127,32 @@ def _log(task_id: str, msg: str):
     print(entry)
 
 
+def _parse_bool_text(value: object, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    text = str(value).strip().lower()
+    if not text:
+        return default
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def _should_auto_use_proxy() -> bool:
+    from core.config_store import config_store
+
+    return _parse_bool_text(
+        config_store.get("register_auto_use_proxy", "1"),
+        default=True,
+    )
+
+
 def _save_task_log(
     platform: str, email: str, status: str, error: str = "", detail: dict = None
 ):
@@ -265,25 +291,35 @@ def _run_register(task_id: str, req: RegisterTaskRequest):
 
         def _do_one(i: int):
             nonlocal next_start_time
-            proxy_pool = None
+            proxy_pool_obj = None
             _proxy = None
+            proxy_source = ""
             _mailbox = None
             current_email = req.email or ""
             attempt_id: int | None = None
             try:
-                from core.proxy_pool import proxy_pool
-
                 control.checkpoint()
                 attempt_id = control.start_attempt()
                 control.checkpoint(attempt_id=attempt_id)
-                _proxy = req.proxy
-                if not _proxy:
-                    # 优先从代理池轮换（每个并发用不同 IP）
-                    _proxy = proxy_pool.get_next() if proxy_pool else None
-                if not _proxy:
-                    from core.config_store import config_store as _cs
-                    _proxy = _cs.get("default_proxy", "") or "http://127.0.0.1:7890"
                 _proxy = normalize_proxy_url(_proxy)
+                explicit_proxy = normalize_proxy_url(req.proxy)
+                if explicit_proxy:
+                    _proxy = explicit_proxy
+                    proxy_source = "手动指定"
+                elif _should_auto_use_proxy():
+                    from core.proxy_pool import proxy_pool
+                    from core.config_store import config_store as _cs
+
+                    proxy_pool_obj = proxy_pool
+                    _proxy = normalize_proxy_url(
+                        proxy_pool_obj.get_next() if proxy_pool_obj else None
+                    )
+                    if _proxy:
+                        proxy_source = "代理池"
+                    else:
+                        _proxy = normalize_proxy_url(_cs.get("default_proxy", ""))
+                        if _proxy:
+                            proxy_source = "默认代理"
                 if req.register_delay_seconds > 0:
                     with start_gate_lock:
                         control.checkpoint(attempt_id=attempt_id)
@@ -324,7 +360,8 @@ def _run_register(task_id: str, req: RegisterTaskRequest):
                 _task_store.set_progress(task_id, f"{i + 1}/{req.count}")
                 _log(task_id, f"开始注册第 {i + 1}/{req.count} 个账号")
                 if _proxy:
-                    _log(task_id, f"使用代理: {_proxy}")
+                    suffix = f" ({proxy_source})" if proxy_source else ""
+                    _log(task_id, f"使用代理: {_proxy}{suffix}")
                 # 尝试提前获取邮箱地址（用于失败归还）
                 _pre_email = getattr(getattr(_mailbox, '_last_email', None), 'email', '') or ''
                 account = _platform.register(
@@ -363,8 +400,8 @@ def _run_register(task_id: str, req: RegisterTaskRequest):
                                 merged_extra.get("luckmail_base_url"),
                             )
                 saved_account = save_account(account)
-                if _proxy:
-                    proxy_pool.report_success(_proxy)
+                if _proxy and proxy_source == "代理池" and proxy_pool_obj is not None:
+                    proxy_pool_obj.report_success(_proxy)
                 _log(task_id, f"[OK] 注册成功: {account.email}")
                 _save_task_log(req.platform, account.email, "success")
                 _update_outlook_register_status(account.email, req.platform, "已注册")
@@ -387,8 +424,12 @@ def _run_register(task_id: str, req: RegisterTaskRequest):
                 _log(task_id, f"[STOP] {e}")
                 return AttemptResult.stopped(str(e))
             except Exception as e:
-                if _proxy and proxy_pool is not None:
-                    proxy_pool.report_fail(_proxy)
+                if (
+                    _proxy
+                    and proxy_source == "代理池"
+                    and proxy_pool_obj is not None
+                ):
+                    proxy_pool_obj.report_fail(_proxy)
                 _log(task_id, f"[FAIL] 注册失败: {e}")
                 # 归还 Outlook 预留邮箱
                 _return_outlook_if_needed(_mailbox, current_email)

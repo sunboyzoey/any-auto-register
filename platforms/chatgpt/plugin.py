@@ -121,7 +121,7 @@ class ChatGPTPlatform(BasePlatform):
         # 公共参数
         kwargs = {
             "password": password or "",
-            "proxy": proxy or "http://127.0.0.1:7890",
+            "proxy": proxy or "",
             "headless": headless,
         }
 
@@ -395,7 +395,7 @@ class ChatGPTPlatform(BasePlatform):
         proxy = self.config.proxy if self.config else None
         if not proxy:
             from core.config_store import config_store
-            proxy = config_store.get("default_proxy", "") or "http://127.0.0.1:7890"
+            proxy = str(config_store.get("default_proxy", "") or "").strip() or None
         extra = account.extra or {}
 
         class _A:

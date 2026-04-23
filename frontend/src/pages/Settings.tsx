@@ -71,7 +71,10 @@ const TAB_ITEMS = [
       {
         title: '默认注册方式',
         desc: '控制注册任务如何执行',
-        fields: [{ key: 'default_executor', label: '执行器类型', type: 'select' }],
+        fields: [
+          { key: 'default_executor', label: '执行器类型', type: 'select' },
+          { key: 'register_auto_use_proxy', label: '注册时自动使用全局代理', type: 'boolean' },
+        ],
       },
     ],
   },
@@ -1106,6 +1109,7 @@ export default function Settings() {
       }
       data.cfworker_domains = parseStoredDomainList(data.cfworker_domains)
       data.cfworker_enabled_domains = parseStoredDomainList(data.cfworker_enabled_domains)
+      data.register_auto_use_proxy = parseBooleanConfigValue(data.register_auto_use_proxy || '1')
       data.cfworker_random_subdomain = parseBooleanConfigValue(data.cfworker_random_subdomain)
       data.cfworker_random_name_subdomain = parseBooleanConfigValue(data.cfworker_random_name_subdomain)
       form.setFieldsValue(data)
@@ -1130,11 +1134,13 @@ export default function Settings() {
       if (domains.length > 0) {
         values.cfworker_domain = ''
       }
+      values.register_auto_use_proxy = parseBooleanConfigValue(values.register_auto_use_proxy)
       values.cfworker_random_subdomain = parseBooleanConfigValue(values.cfworker_random_subdomain)
       values.cfworker_random_name_subdomain = parseBooleanConfigValue(values.cfworker_random_name_subdomain)
 
       await apiFetch('/config', { method: 'PUT', body: JSON.stringify({ data: values }) })
       form.setFieldsValue({
+        register_auto_use_proxy: values.register_auto_use_proxy,
         cfworker_domains: domains,
         cfworker_enabled_domains: enabledDomains,
         cfworker_domain: domains.length > 0 ? '' : values.cfworker_domain,

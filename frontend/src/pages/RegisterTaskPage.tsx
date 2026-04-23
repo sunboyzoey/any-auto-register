@@ -40,6 +40,7 @@ export default function RegisterTaskPage() {
     apiFetch('/config').then((cfg) => {
       const currentPlatform = form.getFieldValue('platform') || 'trae'
       form.setFieldsValue({
+        proxy: '',
         executor_type: normalizeExecutorForPlatform(currentPlatform, cfg.default_executor),
         captcha_solver: cfg.default_captcha_solver || 'yescaptcha',
         mail_provider: cfg.mail_provider || 'cfworker',
@@ -253,6 +254,7 @@ export default function RegisterTaskPage() {
         count: 1,
         concurrency: 1,
         register_delay_seconds: 0,
+        proxy: '',
         maliapi_base_url: 'https://maliapi.215.im/v1',
         maliapi_auto_domain_strategy: 'balanced',
         solver_url: 'http://localhost:8889',
@@ -295,8 +297,13 @@ export default function RegisterTaskPage() {
             <Form.Item name="register_delay_seconds" label="每个注册延迟(秒)" style={{ flex: 1 }}>
               <InputNumber min={0} precision={1} step={0.5} style={{ width: '100%' }} placeholder="0" />
             </Form.Item>
-            <Form.Item name="proxy" label="代理 (可选)" style={{ flex: 1 }}>
-              <Input placeholder="http://user:pass@host:port" />
+            <Form.Item
+              name="proxy"
+              label="代理 (可选)"
+              extra="留空时，是否自动使用代理池/默认代理由“全局配置 → 注册设置”控制。"
+              style={{ flex: 1 }}
+            >
+              <Input placeholder="http://user:pass@host:port" autoComplete="off" />
             </Form.Item>
           </Space>
           {platform === 'chatgpt' && (

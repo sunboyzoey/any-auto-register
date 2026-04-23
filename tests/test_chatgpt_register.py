@@ -13,6 +13,12 @@ smstome_tool_stub.wait_for_otp = lambda *args, **kwargs: None
 sys.modules.setdefault("smstome_tool", smstome_tool_stub)
 
 from platforms.chatgpt.oauth_client import OAuthClient
+from platforms.chatgpt.drission_register import (
+    _format_outlook_code_failure,
+    _is_invalid_otp_candidate,
+    _parse_graph_datetime,
+    _pick_outlook_openai_code,
+)
 from platforms.chatgpt.refresh_token_registration_engine import (
     RefreshTokenRegistrationEngine,
 )
@@ -418,6 +424,74 @@ class OAuthClientPasswordlessTests(unittest.TestCase):
         self.assertEqual(submit_about_you.call_args.args[0], "Ivy")
         self.assertEqual(submit_about_you.call_args.args[1], "Stone")
         self.assertEqual(submit_about_you.call_args.args[2], "1990-01-02")
+
+
+class OutlookOtpFilteringTests(unittest.TestCase):
+    def test_invalid_otp_candidate_filters_obvious_placeholders(self):
+        self.assertTrue(_is_invalid_otp_candidate("000000"))
+        self.assertTrue(_is_invalid_otp_candidate("111111"))
+        self.assertTrue(_is_invalid_otp_candidate("12"))
+        self.assertFalse(_is_invalid_otp_candidate("123456"))
+
+    def test_pick_outlook_openai_code_requires_openai_sender_and_new_message(self):
+        messages = [
+            {
+                "from": {"emailAddress": {"address": "noreply@tm.openai.com"}},
+                "subject": "Your ChatGPT code",
+                "bodyPreview": "Use 123456 to sign in",
+                "receivedDateTime": "2026-04-22T16:00:00Z",
+            },
+            {
+                "from": {"emailAddress": {"address": "noreply@tm.openai.com"}},
+                "subject": "Your ChatGPT code",
+                "bodyPreview": "Use 654321 to sign in",
+                "receivedDateTime": "2026-04-22T16:10:00Z",
+            },
+        ]
+
+        code, meta = _pick_outlook_openai_code(
+            messages,
+            exclude_codes=set(),
+            received_after_ts=_parse_graph_datetime("2026-04-22T16:05:00Z"),
+        )
+
+        self.assertEqual(code, "654321")
+        self.assertEqual(meta["sender"], "noreply@tm.openai.com")
+
+    def test_pick_outlook_openai_code_ignores_non_openai_and_placeholder_codes(self):
+        messages = [
+            {
+                "from": {"emailAddress": {"address": "dreamina@mail.capcut.com"}},
+                "subject": "verification code",
+                "bodyPreview": "Your verification code is 000000",
+                "receivedDateTime": "2026-04-22T16:10:00Z",
+            },
+            {
+                "from": {"emailAddress": {"address": "noreply@tm.openai.com"}},
+                "subject": "Your ChatGPT code",
+                "bodyPreview": "Use 000000 to sign in",
+                "receivedDateTime": "2026-04-22T16:11:00Z",
+            },
+        ]
+
+        code, meta = _pick_outlook_openai_code(
+            messages,
+            exclude_codes=set(),
+            received_after_ts=0.0,
+        )
+
+        self.assertIsNone(code)
+        self.assertIsNone(meta)
+
+    def test_format_outlook_code_failure_reports_precise_reason(self):
+        self.assertEqual(
+            _format_outlook_code_failure({"reason": "no_openai_mail"}),
+            "Outlook 未收到 OpenAI 验证邮件",
+        )
+        self.assertEqual(
+            _format_outlook_code_failure({"reason": "openai_mail_without_valid_code"}),
+            "Outlook 已收到 OpenAI 验证邮件，但未提取到有效验证码",
+        )
 
 
 if __name__ == "__main__":

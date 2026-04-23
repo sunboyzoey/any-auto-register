@@ -13,6 +13,7 @@ CONFIG_KEYS = [
     "default_executor",
     "default_captcha_solver",
     "default_proxy",
+    "register_auto_use_proxy",
     "duckmail_api_url",
     "duckmail_provider_url",
     "duckmail_bearer",
@@ -109,6 +110,8 @@ class AppleMailImportRequest(BaseModel):
 @router.get("")
 def get_config():
     all_cfg = config_store.get_all()
+    if not all_cfg.get("register_auto_use_proxy"):
+        all_cfg["register_auto_use_proxy"] = "1"
     if not all_cfg.get("mail_provider"):
         all_cfg["mail_provider"] = "luckmail"
     if not all_cfg.get("applemail_base_url"):
