@@ -161,6 +161,8 @@ class RegisterTaskRecord:
             "skipped": self.skipped,
             "errors": list(self.errors),
             "control": self.control.snapshot(),
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
         }
         if self.cashier_urls:
             data["cashier_urls"] = list(self.cashier_urls)
@@ -290,7 +292,12 @@ class RegisterTaskStore:
 
     def list_snapshots(self) -> list[dict[str, Any]]:
         with self._lock:
-            return [record.to_dict() for record in self._records.values()]
+            records = sorted(
+                self._records.values(),
+                key=lambda record: record.updated_at,
+                reverse=True,
+            )
+            return [record.to_dict() for record in records]
 
     def log_state(self, task_id: str) -> tuple[list[str], str]:
         with self._lock:
